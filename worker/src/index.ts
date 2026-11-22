@@ -15,7 +15,7 @@ interface Env {
   ALLOWED_ORIGINS: string;
 }
 
-const MODEL = 'claude-opus-5-5';
+const MODEL = 'claude-haiku-5-5';
 const MAX_TURNS = 12;
 const MAX_CHARS = 300;
 
@@ -114,14 +114,11 @@ export default {
 
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
-      const response = await client.beta.messages.create({
+      const response = await client.messages.create({
         model: MODEL,
         // Room for the model's brief thinking plus a short spoken reply.
         max_tokens: 2000,
         output_config: { effort: 'low' },
-        // If the model declines a message, let the API hand the turn to a fallback model.
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
         system: `${RULES}\n\n${persona}\n\n${facts}`,
         messages,
       });
