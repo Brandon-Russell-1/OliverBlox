@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>OliverBlox</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#29a8ff" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="hud" hidden>
+      <div id="stars"><span class="star-icon">⭐</span><span id="star-count">0/10</span></div>
+      <button id="gear" aria-label="Grown-ups: hold to reset the world">⚙️</button>
+      <div id="bubble" hidden></div>
+
+      <div id="hotbar"></div>
+
+      <div id="joystick"><div id="knob"></div></div>
+      <button id="action" class="round" hidden>🚗</button>
+      <button id="jump" class="round">⬆️</button>
+    </div>
+
+    <div id="start">
+      <img src="/icon.svg" alt="" />
+      <h1>OliverBlox</h1>
+      <button id="play" aria-label="Play">▶</button>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
