@@ -66,7 +66,9 @@ function simplify(root: THREE.Object3D): void {
     const old = mesh.material as THREE.MeshStandardMaterial;
     mesh.material = new THREE.MeshLambertMaterial({ map: old.map, color: old.color, emissive: old.emissive });
     mesh.castShadow = true;
-    mesh.frustumCulled = false;
+    // Rigged characters bend away from where their mesh says they are, so they are always drawn;
+    // everything else is skipped when it is off screen.
+    if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) mesh.frustumCulled = false;
   });
 }
 

@@ -39,7 +39,7 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Bolt puzzles:** in the puzzle panel, the target button puts a star a few squares away. The program has to walk Bolt onto it; each one solved pays 3 coins and sets a harder one.
 - **Colour jobs:** Mira sometimes asks for blocks of one colour ("three red blocks"). The job's chip shows the colour.
 - **Shared with friends:** stars and treasure chests now vanish for everyone when one player takes them, and everyone gets the prize. Friends' building counts toward building jobs. Friends are shown in their car or boat, with their pet beside them.
-- **Grown-up controls:** in the grown-ups panel, switch music or skeletons off, see minutes played today, and set a daily limit. When the limit is reached a "time for a break" screen covers the game until a grown-up raises it.
+- **Grown-up controls:** in the grown-ups panel, switch music or skeletons off, see minutes played today, set a daily limit, and choose the graphics setting. Left on Automatic, the game watches its own speed and, if it runs slowly, turns off shadows, then softens the picture, then shortens the view. Best looking and Fastest fix it at either end. When the limit is reached a "time for a break" screen covers the game until a grown-up raises it.
 - **Works offline:** after the first visit the game is kept on the device, so it loads quickly and opens without internet (playing alone; chat and playing together need a connection).
 - **Weather:** showers roll in about every seven minutes and last about a minute: rain, a greyer sky, and thunder and lightning in the heavy ones. It never rains indoors or underground.
 - **Airstrip and plane:** the 🛫 on the map is a runway. Picking ✈️ in the garage parks a propeller plane there. Push forward to speed up, press the up button to climb once it is fast enough, and the down button to descend. Flying too slowly loses height. He can only get out on the ground.
@@ -111,7 +111,7 @@ Playing together needs no API key: skip the `ANTHROPIC_API_KEY` secret and it st
 ### Costs and safety
 
 - GitHub Pages and the Cloudflare Worker, including the rooms for playing together, are on free plans.
-- The AI uses Claude Haiku 5.5 with very short replies. Set a monthly spending limit in the Anthropic console before giving the game to a child.
+- The AI uses Claude Opus 5.5 with very short replies, at roughly a cent or less each; [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md) shows how to switch to the much cheaper Haiku 5.5. Set a monthly spending limit in the Anthropic console before giving the game to a child.
 - The characters' rules live in `worker/src/index.ts`, on the server, so nothing typed into the game can change them. Read and adjust them to suit your child: the wording assumes a player of about six.
 - Players can only send each other emoji from a fixed list, and only people with your Worker address and family code can join a room.
 - The grown-ups panel (hold the gear) has the chat transcript, a daily time limit, and switches for music and fighting.

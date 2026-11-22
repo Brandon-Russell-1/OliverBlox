@@ -91,6 +91,13 @@
           <label><input id="set-music" type="checkbox" /> Music</label>
           <label><input id="set-fighting" type="checkbox" /> Skeletons and fighting</label>
           <label>Minutes a day (0 = no limit) <input id="set-limit" type="number" min="0" max="600" step="5" /></label>
+          <label>Graphics
+            <select id="set-quality">
+              <option value="auto">Automatic</option>
+              <option value="best">Best looking</option>
+              <option value="fast">Fastest</option>
+            </select>
+          </label>
           <span id="played"></span>
         </div>
         <label>What has been said<textarea id="ai-log" readonly rows="6"></textarea></label>

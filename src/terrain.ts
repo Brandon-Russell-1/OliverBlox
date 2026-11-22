@@ -373,6 +373,8 @@ const beamMaterial = new THREE.MeshBasicMaterial({
 export class Terrain {
   private chunks = new Map<string, Chunk>();
   private readonly groundMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+  /** How many chunks are kept loaded in each direction. Lowered on slow devices. */
+  view = VIEW;
   readonly stars: Star[] = [];
   readonly chests: Star[] = [];
 
@@ -389,8 +391,9 @@ export class Terrain {
     const pcz = Math.floor(z / CHUNK);
 
     const missing: [number, number, number][] = [];
-    for (let dz = -VIEW; dz <= VIEW; dz++) {
-      for (let dx = -VIEW; dx <= VIEW; dx++) {
+    const view = this.view;
+    for (let dz = -view; dz <= view; dz++) {
+      for (let dx = -view; dx <= view; dx++) {
         if (!this.chunks.has(`${pcx + dx},${pcz + dz}`)) missing.push([dx * dx + dz * dz, pcx + dx, pcz + dz]);
       }
     }
@@ -398,7 +401,7 @@ export class Terrain {
     for (let i = 0; i < Math.min(budget, missing.length); i++) this.build(missing[i][1], missing[i][2]);
 
     for (const [key, c] of this.chunks) {
-      if (Math.abs(c.cx - pcx) > VIEW + 1 || Math.abs(c.cz - pcz) > VIEW + 1) {
+      if (Math.abs(c.cx - pcx) > view + 1 || Math.abs(c.cz - pcz) > view + 1) {
         this.unload(c);
         this.chunks.delete(key);
       }
@@ -518,7 +521,7 @@ export class Terrain {
       if (h < 1.6 || h > 32 || rng() > 0.55 || inVillage(x, z)) continue;
       put(pick(this.props.bushes), x, z, h, size);
     }
-    for (let i = 0; i < 46; i++) {
+    for (let i = 0; i < 26; i++) {
       const x = ox + rng() * CHUNK;
       const z = oz + rng() * CHUNK;
       const size = 0.5 + rng() * 0.5;

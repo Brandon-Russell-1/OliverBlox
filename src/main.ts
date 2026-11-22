@@ -226,6 +226,49 @@ const SKY = {
   moon: new THREE.Color(0x9fb4ff),
 };
 const skyUniforms = sky.material.uniforms;
+// ---------- graphics quality ----------
+// On a slow device the game steps down by itself: first no shadows, then a softer picture,
+// then a shorter view. A grown-up can also fix it at best or fastest.
+const QUALITY_KEY = 'oliverblox-quality';
+const QUALITY_AUTO_KEY = 'oliverblox-quality-auto';
+let qualityMode = localStorage.getItem(QUALITY_KEY) ?? 'auto';
+let quality = 0;
+let fogNear = 115;
+let fogFar = 198;
+let viewChunks = 4;
+function applyQuality(level: number): void {
+  quality = Math.min(3, Math.max(0, level));
+  sun.castShadow = quality < 1;
+  renderer.setPixelRatio(quality < 2 ? Math.min(window.devicePixelRatio, isTouch ? 1.5 : 2) : 1);
+  viewChunks = quality < 3 ? 4 : 3;
+  fogNear = quality < 3 ? 115 : 85;
+  fogFar = quality < 3 ? 198 : 150;
+}
+applyQuality(qualityMode === 'fast' ? 3 : qualityMode === 'best' ? 0 : Number(localStorage.getItem(QUALITY_AUTO_KEY) ?? 0) || 0);
+let speedTime = 0;
+let speedFrames = 0;
+let settleTime = 10;
+/** Count real frames; if four seconds average under 27 a second, drop one quality level. */
+function watchSpeed(elapsed: number): void {
+  // A gap of seconds is the tab being put away, not a slow frame.
+  if (qualityMode !== 'auto' || quality >= 3 || document.hidden || elapsed > 3) return;
+  // Loading makes the first seconds slow on any device, so they do not count.
+  if (settleTime > 0) {
+    settleTime -= elapsed;
+    return;
+  }
+  speedTime += elapsed;
+  speedFrames++;
+  if (speedTime < 4) return;
+  const fps = speedFrames / speedTime;
+  speedTime = speedFrames = 0;
+  if (fps < 27) {
+    applyQuality(quality + 1);
+    localStorage.setItem(QUALITY_AUTO_KEY, String(quality));
+    settleTime = 3;
+  }
+}
+
 // ---------- weather ----------
 /** Seconds the world has been running. Rain comes and goes with it, and friends share the same clock. */
 let worldTime = 120;
@@ -273,7 +316,7 @@ function updateWeather(dt: number, sheltered: boolean): void {
     skyUniforms.bottom.value.lerp(STORM, falling * 0.6);
     const fog = scene.fog as THREE.Fog;
     fog.color.copy(skyUniforms.bottom.value);
-    fog.far = 198 - 70 * falling;
+    fog.far = fogFar * (1 - 0.35 * falling);
     sun.intensity *= 1 - 0.55 * falling;
     hemi.intensity *= 1 - 0.25 * falling;
   }
@@ -324,8 +367,8 @@ function updateDay(dt: number): void {
     sun.intensity = 0.12;
     hemi.intensity = 0.4;
   } else {
-    fog.near = 115;
-    fog.far = 198;
+    fog.near = fogNear;
+    fog.far = fogFar;
   }
   music.setNight(night > 0.5);
 }
@@ -569,6 +612,14 @@ const breakEl = $('break');
 const setMusic = $<HTMLInputElement>('set-music');
 const setFighting = $<HTMLInputElement>('set-fighting');
 const setLimit = $<HTMLInputElement>('set-limit');
+const setQuality = $<HTMLSelectElement>('set-quality');
+setQuality.addEventListener('change', () => {
+  qualityMode = setQuality.value;
+  localStorage.setItem(QUALITY_KEY, qualityMode);
+  localStorage.removeItem(QUALITY_AUTO_KEY);
+  applyQuality(qualityMode === 'fast' ? 3 : 0);
+  settleTime = 5;
+});
 function applySettings(): void {
   parent.music = setMusic.checked;
   parent.fighting = setFighting.checked;
@@ -673,6 +724,7 @@ gear.addEventListener('pointerdown', (e) => {
     setMusic.checked = parent.music;
     setFighting.checked = parent.fighting;
     setLimit.value = String(parent.limit);
+    setQuality.value = qualityMode;
     $('played').textContent = `Played today: ${minutesToday()} minutes`;
     openParentPanel();
   }, 1500);
@@ -1273,6 +1325,9 @@ async function createGame(assets: Assets): Promise<Game> {
       if (mark) person.marker.material.map = emojiTexture(mark);
       const p = person.actor.root.position;
       const d = Math.hypot(p.x - who.x, p.z - who.z);
+      // Far-off villagers are not drawn or animated.
+      person.actor.root.visible = d < 100;
+      if (d >= 100) continue;
       if (d < 9) {
         // Turn and wave when the hero comes over.
         const want = Math.atan2(who.x - p.x, who.z - p.z);
@@ -2437,6 +2492,7 @@ async function createGame(assets: Assets): Promise<Game> {
   // The hero's torch: the only real light underground.
   const torch = new THREE.PointLight(0xffc98a, 0, 34, 1.4);
   torch.position.y = 3;
+  torch.visible = false;
   avatar.add(torch);
   scene.add(hole, ladder, roof);
   /** The dungeon he is in, if any. */
@@ -2479,6 +2535,8 @@ async function createGame(assets: Assets): Promise<Game> {
     if (cave) hole.position.set(cave.x, groundAt(cave.x, cave.z) + 0.12, cave.z);
     roof.visible = ladder.visible = dungeon !== null;
     torch.intensity = dungeon ? 30 : 0;
+    // Switched right off above ground: even a dark light makes every surface do extra work.
+    torch.visible = dungeon !== null;
     holeNear = null;
     // Walking onto the hole goes down; walking onto the ladder comes back up.
     if (cave && !driving) atZone(cave.x, cave.z, 2.4, () => useHole(cave));
@@ -2790,6 +2848,8 @@ async function createGame(assets: Assets): Promise<Game> {
         },
         peersVisible: () => peers.visibleDebug(),
         peersBadges: () => peers.badgesDebug(),
+        perf: () => ({ ...renderer.info.render }),
+        frameMs: () => frameMs,
         peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
@@ -2819,6 +2879,7 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          quality,
           visiting,
           homes: homes.size,
           rain: +rain.toFixed(2),
@@ -2969,6 +3030,7 @@ async function createGame(assets: Assets): Promise<Game> {
       }
 
       const who = driving ? carPos : player.pos;
+      terrain.view = viewChunks;
       terrain.update(who.x, who.z, 2);
       animals.update(dt, who);
       pet?.update(dt, inside ?? who);
@@ -3023,14 +3085,20 @@ function resize(): void {
 window.addEventListener('resize', resize);
 resize();
 
+/** How long the game logic took last frame, not counting drawing. For performance checks. */
+let frameMs = 0;
 let last = performance.now();
 function loop(time: number): void {
-  const dt = Math.min((time - last) / 1000, 0.05);
+  const elapsed = (time - last) / 1000;
+  const dt = Math.min(elapsed, 0.05);
+  if (started) watchSpeed(elapsed);
   last = time;
   now = time / 1000;
   input.update();
   if (game) {
+    const began = performance.now();
     game.frame(dt);
+    frameMs = performance.now() - began;
     renderer.render(scene, camera);
   }
   requestAnimationFrame(loop);

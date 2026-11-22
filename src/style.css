@@ -829,6 +829,13 @@ body:not(.touch) #fly {
   margin: 0;
 }
 
+#parent-toggles select {
+  padding: 4px 6px;
+  border: 2px solid #b9c3e6;
+  border-radius: 8px;
+  font: 14px system-ui, sans-serif;
+}
+
 #parent #parent-toggles input[type='number'] {
   width: 76px;
 }
