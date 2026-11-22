@@ -20,6 +20,9 @@ export interface PropLibrary {
   bushes: PropDef[];
   grass: PropDef[];
   material: THREE.Material;
+  /** Village buildings, in the order of BUILDINGS. */
+  buildings: PropDef[];
+  buildingMaterial: THREE.Material;
 }
 
 export interface AnimatedModel {
@@ -29,18 +32,25 @@ export interface AnimatedModel {
 
 export interface Assets {
   props: PropLibrary;
-  character: THREE.Object3D;
+  /** Shared humanoid animations, by clip name. They fit every KayKit character and skeleton. */
   clips: Map<string, THREE.AnimationClip>;
-  car: THREE.Object3D;
   pets: AnimatedModel[];
+  enemies: THREE.Object3D[];
+  sword: THREE.Object3D;
+  staff: THREE.Object3D;
 }
+
+export const CHARACTERS = ['Rogue', 'Knight', 'Mage', 'Barbarian', 'Ranger', 'Druid', 'Engineer'];
+/** The well comes first: it marks the middle of every village. */
+export const BUILDINGS = ['well', 'home_A', 'home_B', 'tavern', 'market', 'blacksmith', 'windmill', 'church', 'townhall', 'tower_A', 'stables'];
 
 const TREES = ['Tree_1_A', 'Tree_1_B', 'Tree_2_A', 'Tree_2_B', 'Tree_3_A', 'Tree_4_A', 'Tree_4_B', 'Tree_5_A', 'Tree_6_A', 'Tree_7_A'];
 const ROCKS = ['Rock_1_A', 'Rock_1_H', 'Rock_2_A', 'Rock_2_E', 'Rock_3_A', 'Rock_3_H', 'Rock_4_A', 'Rock_5_A', 'Rock_6_A'];
 const BUSHES = ['Bush_1_A', 'Bush_2_A', 'Bush_3_A', 'Bush_4_A'];
 const GRASS = ['Grass_1_A', 'Grass_1_B', 'Grass_2_A', 'Grass_2_B'];
-const ANIMS = ['MovementBasic', 'MovementAdvanced', 'General', 'Simulation'];
+const ANIMS = ['MovementBasic', 'MovementAdvanced', 'General', 'Simulation', 'CombatMelee'];
 const PETS = ['dog', 'cat', 'bunny', 'cow', 'deer', 'fox', 'pig', 'chick'];
+const ENEMIES = ['Skeleton_Minion', 'Skeleton_Warrior'];
 
 /** Swap the loader's physically based materials for cheap ones that suit the art and tablets. */
 function simplify(root: THREE.Object3D): void {
@@ -48,10 +58,35 @@ function simplify(root: THREE.Object3D): void {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
     const old = mesh.material as THREE.MeshStandardMaterial;
-    mesh.material = new THREE.MeshLambertMaterial({ map: old.map, color: old.color });
+    mesh.material = new THREE.MeshLambertMaterial({ map: old.map, color: old.color, emissive: old.emissive });
     mesh.castShadow = true;
     mesh.frustumCulled = false;
   });
+}
+
+const loader = new GLTFLoader();
+const cache = new Map<string, Promise<GLTF>>();
+
+/** Load a model once; later calls share the same download. Used for anything picked at play time. */
+export function loadModel(path: string): Promise<GLTF> {
+  let p = cache.get(path);
+  if (!p) {
+    p = loader.loadAsync(BASE + path).then((gltf) => {
+      simplify(gltf.scene);
+      return gltf;
+    });
+    cache.set(path, p);
+  }
+  return p;
+}
+
+function firstMap(gltf: GLTF): THREE.Texture | null {
+  let map: THREE.Texture | null = null;
+  gltf.scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) map = (mesh.material as THREE.MeshLambertMaterial).map;
+  });
+  return map;
 }
 
 function toPropDef(gltf: GLTF): PropDef {
@@ -85,41 +120,33 @@ function toPropDef(gltf: GLTF): PropDef {
 }
 
 export async function loadAssets(onProgress: (fraction: number) => void): Promise<Assets> {
-  const loader = new GLTFLoader();
-  const total = TREES.length + ROCKS.length + BUSHES.length + GRASS.length + ANIMS.length + PETS.length + 2;
+  const groups = [TREES, ROCKS, BUSHES, GRASS, ANIMS, PETS, ENEMIES, BUILDINGS];
+  const total = groups.reduce((n, g) => n + g.length, 0) + 2;
   let done = 0;
   const load = async (path: string): Promise<GLTF> => {
-    const gltf = await loader.loadAsync(BASE + path);
+    const gltf = await loadModel(path);
     onProgress(++done / total);
     return gltf;
   };
-  const nature = (names: string[]): Promise<GLTF[]> =>
-    Promise.all(names.map((n) => load(`nature/${n}_Color1.gltf`)));
+  const all = (names: string[], path: (n: string) => string): Promise<GLTF[]> =>
+    Promise.all(names.map((n) => load(path(n))));
+  const nature = (names: string[]): Promise<GLTF[]> => all(names, (n) => `nature/${n}_Color1.gltf`);
 
-  const [trees, rocks, bushes, grass, anims, pets, character, car] = await Promise.all([
+  const [trees, rocks, bushes, grass, anims, pets, enemies, buildings, sword, staff] = await Promise.all([
     nature(TREES),
     nature(ROCKS),
     nature(BUSHES),
     nature(GRASS),
-    Promise.all(ANIMS.map((n) => load(`anim/${n}.glb`))),
-    Promise.all(PETS.map((n) => load(`pets/animal-${n}.glb`))),
-    load('char/Rogue.glb'),
-    load('car/sedan.glb'),
+    all(ANIMS, (n) => `anim/${n}.glb`),
+    all(PETS, (n) => `pets/animal-${n}.glb`),
+    all(ENEMIES, (n) => `enemy/${n}.glb`),
+    all(BUILDINGS, (n) => `village/building_${n}_blue.gltf`),
+    load('weapon/sword_1handed.gltf'),
+    load('weapon/staff.gltf'),
   ]);
-
-  // Every forest model shares one texture, so one material covers all scenery.
-  let forestMap: THREE.Texture | null = null;
-  trees[0].scene.traverse((o) => {
-    const mesh = o as THREE.Mesh;
-    if (mesh.isMesh) forestMap = (mesh.material as THREE.MeshStandardMaterial).map;
-  });
 
   const clips = new Map<string, THREE.AnimationClip>();
   for (const a of anims) for (const clip of a.animations) clips.set(clip.name, clip);
-
-  simplify(character.scene);
-  simplify(car.scene);
-  for (const p of pets) simplify(p.scene);
 
   return {
     props: {
@@ -127,11 +154,15 @@ export async function loadAssets(onProgress: (fraction: number) => void): Promis
       rocks: rocks.map(toPropDef),
       bushes: bushes.map(toPropDef),
       grass: grass.map(toPropDef),
-      material: new THREE.MeshLambertMaterial({ map: forestMap }),
+      // Each pack shares one texture, so one material covers all of its models.
+      material: new THREE.MeshLambertMaterial({ map: firstMap(trees[0]) }),
+      buildings: buildings.map(toPropDef),
+      buildingMaterial: new THREE.MeshLambertMaterial({ map: firstMap(buildings[0]) }),
     },
-    character: character.scene,
     clips,
-    car: car.scene,
     pets: pets.map((p) => ({ scene: p.scene, clips: p.animations })),
+    enemies: enemies.map((e) => e.scene),
+    sword: sword.scene,
+    staff: staff.scene,
   };
 }

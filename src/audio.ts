@@ -34,6 +34,10 @@ export const sfx = {
     tone(311, 0.3, 'sawtooth', 0, 0.09);
     tone(392, 0.3, 'sawtooth', 0, 0.09);
   },
+  swing: () => tone(260, 0.12, 'sawtooth', 0, 0.06),
+  zap: () => [900, 1300].forEach((f, i) => tone(f, 0.12, 'square', i * 0.05, 0.06)),
+  bonk: () => tone(180, 0.15, 'square', 0, 0.12),
+  ouch: () => [300, 200].forEach((f, i) => tone(f, 0.15, 'sawtooth', i * 0.1, 0.1)),
   door: () => [330, 440].forEach((f, i) => tone(f, 0.12, 'sine', i * 0.08, 0.15)),
 };
 

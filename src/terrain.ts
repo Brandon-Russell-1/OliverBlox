@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { fbm, hash2, smoothstep, mulberry32 } from './noise';
-import type { PropDef, PropLibrary } from './assets';
+import { BUILDINGS, type PropDef, type PropLibrary } from './assets';
 import { makeStar } from './models';
 
 /** Chunk edge in metres, and how many terrain cells run along it. */
@@ -12,7 +12,7 @@ export const VIEW = 4;
 export const SEA_LEVEL = 0;
 
 /** The shape of the land: a pure function of position, so the world is endless and repeatable. */
-function rawHeight(x: number, z: number): number {
+function baseHeight(x: number, z: number): number {
   const continent = fbm(x / 520 + 3.7, z / 520 - 1.2, 3, 11);
   const hills = fbm(x / 110, z / 110, 4, 23);
   const mountains = fbm(x / 330 + 9, z / 330 + 4, 2, 37);
@@ -26,6 +26,86 @@ function rawHeight(x: number, z: number): number {
   // The start area is always a gentle meadow, wherever the noise would have put it.
   const k = 1 - smoothstep(50, 170, Math.hypot(x, z));
   return h * (1 - k) + (4 + (hills - 0.5) * 5) * k;
+}
+
+export interface Building {
+  /** Index into the building models. */
+  def: number;
+  x: number;
+  z: number;
+  rot: number;
+  scale: number;
+}
+
+export interface Village {
+  x: number;
+  z: number;
+  h: number;
+  buildings: Building[];
+}
+
+/** The world is divided into big squares; each may hold one village. */
+const REGION = 420;
+const BUILDING_SCALE = 11;
+export const VILLAGE_RADIUS = 46;
+const villages = new Map<string, Village | null>();
+
+function villageIn(rx: number, rz: number): Village | null {
+  const key = `${rx},${rz}`;
+  const cached = villages.get(key);
+  if (cached !== undefined) return cached;
+
+  let village: Village | null = null;
+  const home = rx === 0 && rz === 0;
+  // The first village is always a short walk from where the game starts.
+  const x = home ? 80 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
+  const z = home ? 75 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
+  const h = baseHeight(x, z);
+  if (home || (hash2(rx, rz, 71) < 0.6 && h > 3 && h < 22)) {
+    const buildings: Building[] = [{ def: 0, x, z, rot: 0, scale: BUILDING_SCALE * 0.6 }];
+    const n = 6 + Math.floor(hash2(rx, rz, 74) * 3);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + hash2(rx + i * 31, rz, 75) * 0.3;
+      const r = 26 + hash2(rx + i * 31, rz, 76) * 7;
+      const bx = x + Math.sin(a) * r;
+      const bz = z + Math.cos(a) * r;
+      const def = 1 + Math.floor(hash2(rx + i * 31, rz, 77) * (BUILDINGS.length - 1));
+      // Every building faces the well in the middle.
+      buildings.push({ def, x: bx, z: bz, rot: Math.atan2(x - bx, z - bz), scale: BUILDING_SCALE });
+    }
+    village = { x, z, h, buildings };
+  }
+  villages.set(key, village);
+  return village;
+}
+
+/** The closest village to a point, looking in the surrounding regions. */
+export function nearestVillage(x: number, z: number): Village | null {
+  const rx = Math.floor(x / REGION);
+  const rz = Math.floor(z / REGION);
+  let best: Village | null = null;
+  let bestDist = Infinity;
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const v = villageIn(rx + dx, rz + dz);
+      if (!v) continue;
+      const d = Math.hypot(v.x - x, v.z - z);
+      if (d < bestDist) {
+        best = v;
+        bestDist = d;
+      }
+    }
+  }
+  return best;
+}
+
+/** Land shape with a level patch pressed into it wherever a village stands. */
+function rawHeight(x: number, z: number): number {
+  const h = baseHeight(x, z);
+  const v = nearestVillage(x, z);
+  if (!v) return h;
+  const k = 1 - smoothstep(VILLAGE_RADIUS - 8, VILLAGE_RADIUS + 28, Math.hypot(v.x - x, v.z - z));
+  return h * (1 - k) + v.h * k;
 }
 
 const heightCache = new Map<number, number>();
@@ -99,6 +179,7 @@ interface Chunk {
   cz: number;
   ground: THREE.Mesh;
   props: THREE.Mesh | null;
+  buildings: THREE.Mesh | null;
   colliders: Collider[];
   star: Star | null;
 }
@@ -216,6 +297,10 @@ export class Terrain {
     const placements: Placement[] = [];
     const colliders: Collider[] = [];
     const pick = (list: PropDef[]): PropDef => list[Math.floor(rng() * list.length)];
+    const village = nearestVillage(ox + CHUNK / 2, oz + CHUNK / 2);
+    // Keep the village green clear of trees and boulders.
+    const inVillage = (x: number, z: number): boolean =>
+      village !== null && Math.hypot(x - village.x, z - village.z) < VILLAGE_RADIUS;
     const put = (def: PropDef, x: number, z: number, y: number, targetHeight: number): number => {
       const scale = targetHeight / def.height;
       placements.push({ def, x, y, z, scale, rot: rng() * Math.PI * 2 });
@@ -228,7 +313,7 @@ export class Terrain {
       const roll = rng();
       const size = 9 + rng() * 5;
       const h = groundAt(x, z);
-      if (h < 1.6 || h > 34 || Math.hypot(x, z) < 12) continue;
+      if (h < 1.6 || h > 34 || Math.hypot(x, z) < 12 || inVillage(x, z)) continue;
       const density = smoothstep(0.42, 0.68, fbm(x / 130, z / 130, 2, 7));
       if (roll > density * 0.9 + 0.05) continue;
       put(pick(this.props.trees), x, z, h, size);
@@ -240,7 +325,7 @@ export class Terrain {
       const roll = rng();
       const size = 0.5 + rng() * rng() * 3.5;
       const h = groundAt(x, z);
-      if (h < -2 || Math.hypot(x, z) < 8) continue;
+      if (h < -2 || Math.hypot(x, z) < 8 || inVillage(x, z)) continue;
       if (roll > (h > 28 ? 0.9 : 0.4)) continue;
       const def = pick(this.props.rocks);
       const scale = put(def, x, z, h - size * 0.1, size);
@@ -249,9 +334,9 @@ export class Terrain {
     for (let i = 0; i < 7; i++) {
       const x = ox + rng() * CHUNK;
       const z = oz + rng() * CHUNK;
-      const size = 0.8 + rng() * 0.9;
+      const size = 0.5 + rng() * 0.6;
       const h = groundAt(x, z);
-      if (h < 1.6 || h > 32 || rng() > 0.55) continue;
+      if (h < 1.6 || h > 32 || rng() > 0.55 || inVillage(x, z)) continue;
       put(pick(this.props.bushes), x, z, h, size);
     }
     for (let i = 0; i < 46; i++) {
@@ -263,6 +348,15 @@ export class Terrain {
       put(pick(this.props.grass), x, z, h, size);
     }
 
+    // ---- village buildings that stand in this chunk ----
+    const built: Placement[] = [];
+    for (const b of village?.buildings ?? []) {
+      if (b.x < ox || b.x >= ox + CHUNK || b.z < oz || b.z >= oz + CHUNK) continue;
+      const def = this.props.buildings[b.def];
+      built.push({ def, x: b.x, y: groundAt(b.x, b.z) - 0.15, z: b.z, scale: b.scale, rot: b.rot });
+      colliders.push({ x: b.x, z: b.z, r: def.radius * b.scale * 0.8 });
+    }
+
     // ---- star ----
     let star: Star | null = null;
     const id = `${cx},${cz}`;
@@ -271,7 +365,7 @@ export class Terrain {
       const x = ox + 6 + rng() * (CHUNK - 12);
       const z = oz + 6 + rng() * (CHUNK - 12);
       const h = groundAt(x, z);
-      if (h > 1.2 && Math.hypot(x, z) > 6) {
+      if (h > 1.2 && Math.hypot(x, z) > 6 && !inVillage(x, z)) {
         const group = new THREE.Group();
         const beam = new THREE.Mesh(beamGeometry, beamMaterial);
         beam.position.y = 20;
@@ -286,11 +380,19 @@ export class Terrain {
       }
     }
 
-    this.chunks.set(id, { cx, cz, ground, props: this.bake(placements), colliders, star });
+    this.chunks.set(id, {
+      cx,
+      cz,
+      ground,
+      props: this.bake(placements, this.props.material),
+      buildings: this.bake(built, this.props.buildingMaterial),
+      colliders,
+      star,
+    });
   }
 
   /** Bake every tree, rock and bush of a chunk into one mesh: one draw call instead of dozens. */
-  private bake(placements: Placement[]): THREE.Mesh | null {
+  private bake(placements: Placement[], material: THREE.Material): THREE.Mesh | null {
     if (placements.length === 0) return null;
     const total = placements.reduce((n, pl) => n + pl.def.count, 0);
     const pos = new Float32Array(total * 3);
@@ -321,7 +423,7 @@ export class Terrain {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    const mesh = new THREE.Mesh(geo, this.props.material);
+    const mesh = new THREE.Mesh(geo, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
@@ -331,9 +433,10 @@ export class Terrain {
   private unload(c: Chunk): void {
     this.scene.remove(c.ground);
     c.ground.geometry.dispose();
-    if (c.props) {
-      this.scene.remove(c.props);
-      c.props.geometry.dispose();
+    for (const mesh of [c.props, c.buildings]) {
+      if (!mesh) continue;
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
     }
     if (c.star) this.removeStar(c.star);
   }

@@ -4,10 +4,11 @@ A small, kid-safe 3D sandbox game that runs entirely in the browser. No accounts
 
 ## Play
 
-An endless world of meadows, forests, beaches, sea and snowy mountains. Walk in any direction and it keeps going.
+An endless world of meadows, forests, beaches, sea and snowy mountains, with villages to find. Walk in any direction and it keeps going.
 
 | | Tablet | PC |
 | --- | --- | --- |
+| Pick a hero | Arrows on the start screen | Arrows on the start screen |
 | Move | Left stick | WASD or arrow keys |
 | Run | Push the stick all the way | Hold Shift |
 | Jump | Arrow button | Space |
@@ -15,11 +16,19 @@ An endless world of meadows, forests, beaches, sea and snowy mountains. Walk in 
 | Fly (god mode) | Hero button; arrow goes up, the down button goes down | F; Space up, C down |
 | Swim | Walk into deep water | Walk into deep water |
 | Look around | Drag the screen, pinch to zoom | Drag the mouse, wheel to zoom |
-| Build | Tap the world; pick the pickaxe to remove | Click; right-click removes; 1-9 pick a tool |
-| Car | Walk up to it and tap the car button | E |
+| Fight | Pick the sword or wand, then tap the screen or the swords button | Click, or Q |
+| Build | Pick a colour and tap the world; the pickaxe removes | Click; right-click removes; 1-9 pick a tool |
+| Vehicles | Car button (top right) gives any car or boat | Same; E gets in and out |
+| Talk | Robot button for Bolt; speech button near a villager | Same; E near a villager |
 
-- Stars are marked by beams of light. Bolt the robot counts them out loud.
-- Everything saves itself in the browser. Grown-ups: hold the gear button for two seconds to start over.
+- Stars are marked by beams of light, and each skeleton beaten gives one more. Bolt counts them out loud.
+- Skeletons only appear out in the wilds, never near the start or a village. They are slower than a walk. Running out of hearts just pops the hero back to a quiet spot.
+- Everything saves itself in the browser.
+- Grown-ups: hold the gear button for two seconds for the AI settings, the chat transcript and the erase button.
+
+## AI characters
+
+Bolt and the villagers use scripted lines until you connect them to Claude. See [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md).
 
 ## Develop
 
@@ -33,11 +42,11 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 
 ## Roadmap
 
-1. Open world: endless terrain, character, car, animals, building, stars (done)
-2. Villages, quests, more vehicles and things to pick up, block coding
-3. AI characters through a Cloudflare Worker
+1. Open world: endless terrain, heroes, vehicles, animals, building, stars (done)
+2. Villages, weapons and skeletons, garage, talking characters (done)
+3. Quests, things to pick up, block coding
 4. Invite-code multiplayer
 
 ## Credits
 
-3D models are CC0 (public domain): characters, animations and forest scenery by [Kay Lousberg](https://www.kaylousberg.com), car and animals by [Kenney](https://kenney.nl).
+3D models are CC0 (public domain): heroes, skeletons, weapons, animations, forest scenery and village buildings by [Kay Lousberg](https://www.kaylousberg.com), vehicles and animals by [Kenney](https://kenney.nl).

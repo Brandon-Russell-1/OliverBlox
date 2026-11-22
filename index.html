@@ -19,7 +19,11 @@
 
     <div id="hud" hidden>
       <div id="stars"><span class="star-icon">⭐</span><span id="star-count">0</span></div>
-      <button id="gear" aria-label="Grown-ups: hold to reset the world">⚙️</button>
+      <div id="hearts"></div>
+      <button id="bolt-talk" class="chip" aria-label="Talk to Bolt">🤖💬</button>
+      <button id="garage-btn" class="chip" aria-label="Vehicles">🚗</button>
+      <button id="gear" aria-label="Grown-ups: hold for settings">⚙️</button>
+      <div id="garage" hidden></div>
       <div id="bubble" hidden></div>
 
       <div id="hotbar"></div>
@@ -28,12 +32,38 @@
       <button id="action" class="round" hidden>🚗</button>
       <button id="fly" class="round small" aria-label="Fly">🦸</button>
       <button id="crawl" class="round small" aria-label="Crawl">🐛</button>
+      <button id="attack" class="round" aria-label="Attack">⚔️</button>
       <button id="jump" class="round">⬆️</button>
+
+      <div id="chat" hidden>
+        <div id="chat-head"><span id="chat-who"></span><button id="chat-close" aria-label="Close">✖</button></div>
+        <div id="chat-text"></div>
+        <div id="chat-row">
+          <button id="chat-mic" aria-label="Speak">🎤</button>
+          <input id="chat-input" maxlength="200" autocomplete="off" />
+          <button id="chat-send" aria-label="Send">➤</button>
+        </div>
+      </div>
+
+      <div id="parent" hidden>
+        <h2>Grown-ups</h2>
+        <label>AI helper address<input id="ai-url" placeholder="https://oliverblox-ai.your-name.workers.dev" /></label>
+        <label>Family code<input id="ai-code" type="password" /></label>
+        <label>What has been said<textarea id="ai-log" readonly rows="8"></textarea></label>
+        <div id="parent-row">
+          <button id="parent-save">Save</button>
+          <button id="parent-close">Close</button>
+          <button id="parent-erase">Erase world</button>
+        </div>
+      </div>
     </div>
 
     <div id="start">
-      <img src="/icon.svg" alt="" />
-      <h1>OliverBlox</h1>
+      <h1><img src="/icon.svg" alt="" />OliverBlox</h1>
+      <div id="picker" hidden>
+        <button id="prev" aria-label="Previous hero">◀</button>
+        <button id="next" aria-label="Next hero">▶</button>
+      </div>
       <button id="play" aria-label="Play" hidden>▶</button>
       <div id="loading"><div id="loading-bar"></div></div>
     </div>

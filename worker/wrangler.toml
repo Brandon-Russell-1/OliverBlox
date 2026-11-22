@@ -1,0 +1,11 @@
+name = "oliverblox-ai"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+[vars]
+# Web addresses allowed to use this helper: the live game, plus the local test addresses.
+ALLOWED_ORIGINS = "https://brandonrussell.io,http://localhost:5173,http://localhost:4173"
+
+# Two secrets are set separately so they never appear in this file or on GitHub:
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put FAMILY_CODE

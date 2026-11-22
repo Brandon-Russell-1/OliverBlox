@@ -32,6 +32,7 @@ export class Input {
   onHotkey: (n: number) => void = () => {};
   onCrawl: () => void = () => {};
   onFly: () => void = () => {};
+  onAttack: () => void = () => {};
 
   private keys = new Set<string>();
   private joyX = 0;
@@ -51,6 +52,8 @@ export class Input {
     crawl: HTMLElement,
   ) {
     window.addEventListener('keydown', (e) => {
+      // Typing in a text box (chat, grown-up settings) must not move the hero.
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
@@ -58,6 +61,7 @@ export class Input {
       if (e.code === 'KeyE' || e.code === 'Enter') this.onAction();
       if (e.code === 'KeyC') this.onCrawl();
       if (e.code === 'KeyF') this.onFly();
+      if (e.code === 'KeyQ') this.onAttack();
       if (e.code.startsWith('Digit')) this.onHotkey(Number(e.code.slice(5)));
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
