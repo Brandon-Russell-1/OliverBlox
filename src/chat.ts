@@ -1,10 +1,11 @@
-import { speak } from './audio';
+import { speak, sfx, listVoices, getVoiceName, setVoiceName, type VoiceStyle } from './audio';
 
 /** A character Oliver can talk to. The real personality lives on the server; these are the offline lines. */
 export interface Persona {
   id: string;
   name: string;
   emoji: string;
+  voice: VoiceStyle;
   hello: string;
   /** Spoken when the AI is not set up or cannot be reached. */
   lines: string[];
@@ -15,6 +16,7 @@ export const PERSONAS: Record<string, Persona> = {
     id: 'bolt',
     name: 'Bolt',
     emoji: '🤖',
+    voice: { pitch: 1.7, rate: 1.05 },
     hello: 'Beep boop! What shall we do?',
     lines: [
       'Let us find more stars! Look for the beams of light.',
@@ -27,6 +29,7 @@ export const PERSONAS: Record<string, Persona> = {
     id: 'mage',
     name: 'Mira',
     emoji: '🧙',
+    voice: { pitch: 1.3, rate: 0.95 },
     hello: 'Hello, young wizard! I am Mira.',
     lines: [
       'A magic word starts with the letter M. Can you think of one?',
@@ -38,6 +41,7 @@ export const PERSONAS: Record<string, Persona> = {
     id: 'barbarian',
     name: 'Bram',
     emoji: '💪',
+    voice: { pitch: 0.5, rate: 0.9 },
     hello: 'Ho there, little hero! I am Bram.',
     lines: [
       'I can lift three rocks! Then two more. How many is that?',
@@ -49,6 +53,7 @@ export const PERSONAS: Record<string, Persona> = {
     id: 'druid',
     name: 'Fern',
     emoji: '🌿',
+    voice: { pitch: 1.0, rate: 0.85 },
     hello: 'Welcome, friend. I am Fern.',
     lines: [
       'I saw a fox today. What sound does a fox make?',
@@ -176,7 +181,8 @@ export class Chat {
 
   private say(reply: string): void {
     this.text.textContent = reply;
-    speak(reply);
+    if (this.persona?.id === 'bolt') sfx.chirp();
+    speak(reply, this.persona?.voice);
   }
 
   private submit(): void {
@@ -229,6 +235,12 @@ export function setupParentPanel(onErase: () => void): () => void {
   const url = $<HTMLInputElement>('ai-url');
   const code = $<HTMLInputElement>('ai-code');
   const transcript = $<HTMLTextAreaElement>('ai-log');
+  const voice = $<HTMLSelectElement>('voice');
+  voice.addEventListener('change', () => setVoiceName(voice.value));
+  $('voice-test').addEventListener('click', () => {
+    setVoiceName(voice.value);
+    speak('Hi Oliver! I found three stars. Can you find more?');
+  });
   $('parent-save').addEventListener('click', () => {
     setAiSettings({ url: url.value, code: code.value });
     panel.hidden = true;
@@ -244,6 +256,10 @@ export function setupParentPanel(onErase: () => void): () => void {
     url.value = s.url;
     code.value = s.code;
     transcript.value = chatLog() || 'No chats yet.';
+    // Voices differ on every device, so the list is read fresh each time. Best guesses come first.
+    const voices = listVoices();
+    voice.replaceChildren(...voices.map((v) => new Option(`${v.name} (${v.lang})`, v.name)));
+    voice.value = voices.some((v) => v.name === getVoiceName()) ? getVoiceName() : (voices[0]?.name ?? '');
     panel.hidden = false;
   };
 }

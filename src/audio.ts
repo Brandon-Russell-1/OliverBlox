@@ -38,17 +38,65 @@ export const sfx = {
   zap: () => [900, 1300].forEach((f, i) => tone(f, 0.12, 'square', i * 0.05, 0.06)),
   bonk: () => tone(180, 0.15, 'square', 0, 0.12),
   ouch: () => [300, 200].forEach((f, i) => tone(f, 0.15, 'sawtooth', i * 0.1, 0.1)),
+  chirp: () => [1200, 1600, 1400].forEach((f, i) => tone(f, 0.07, 'square', i * 0.06, 0.05)),
   door: () => [330, 440].forEach((f, i) => tone(f, 0.12, 'sine', i * 0.08, 0.15)),
 };
 
+const VOICE_KEY = 'oliverblox-voice';
+
+/** How a character sounds: 1 is normal for both; pitch runs 0 to 2. */
+export interface VoiceStyle {
+  pitch: number;
+  rate: number;
+}
+
+const BOLT_VOICE: VoiceStyle = { pitch: 1.7, rate: 1.05 };
+
+/** English voices on this device, best first. Empty until the browser has loaded them. */
+export function listVoices(): SpeechSynthesisVoice[] {
+  if (!('speechSynthesis' in window)) return [];
+  const score = (v: SpeechSynthesisVoice): number => {
+    let n = 0;
+    // The natural-sounding voices are labelled differently by each maker.
+    if (/natural|neural/i.test(v.name)) n += 6;
+    if (/enhanced|premium/i.test(v.name)) n += 5;
+    if (/google/i.test(v.name)) n += 3;
+    if (/samantha|ava|allison|aria|jenny|libby|sonia|karen|moira/i.test(v.name)) n += 2;
+    if (v.lang === 'en-US') n += 1;
+    return n;
+  };
+  return speechSynthesis
+    .getVoices()
+    .filter((v) => v.lang.startsWith('en'))
+    .sort((x, y) => score(y) - score(x));
+}
+
+export function getVoiceName(): string {
+  return localStorage.getItem(VOICE_KEY) ?? '';
+}
+
+export function setVoiceName(name: string): void {
+  localStorage.setItem(VOICE_KEY, name);
+}
+
+function chosenVoice(): SpeechSynthesisVoice | null {
+  const voices = listVoices();
+  return voices.find((v) => v.name === getVoiceName()) ?? voices[0] ?? null;
+}
+
 /** Say something out loud. Oliver is an early reader, so the game talks instead of showing text. */
-export function speak(text: string): void {
+export function speak(text: string, style: VoiceStyle = BOLT_VOICE): void {
   if (!('speechSynthesis' in window)) return;
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.rate = 0.9;
-    u.pitch = 1.25;
+    const voice = chosenVoice();
+    if (voice) {
+      u.voice = voice;
+      u.lang = voice.lang;
+    }
+    u.rate = style.rate;
+    u.pitch = style.pitch;
     speechSynthesis.speak(u);
   } catch {
     // Speech is a nice-to-have; the game works without it.
