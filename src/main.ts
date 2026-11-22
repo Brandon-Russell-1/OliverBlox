@@ -6,7 +6,7 @@ import { MiniMap, type MapIcon } from './map';
 import { Home, ROOM, type Spot } from './home';
 import { Coder } from './coder';
 import { Net, Peers } from './net';
-import { Blocks, HOTBAR, BLOCK_COLORS, EXTRA_BLOCKS } from './blocks';
+import { Blocks, HOTBAR, BLOCK_COLORS, EXTRA_BLOCKS, SLOPE, GLASS, DOOR } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
 import { Animals, Pet, type Animal } from './animals';
@@ -982,7 +982,8 @@ async function createGame(assets: Assets): Promise<Game> {
   function updateDoors(dt: number): void {
     inAnyZone = false;
     const at = doorSpot(0.25);
-    frontDoor.visible = at !== null && inside === null;
+    // The cottage has its own painted door, so the extra one stays hidden.
+    frontDoor.visible = false;
     let near = false;
     if (inside) {
       // Indoors: the way out is the door in the far wall.
@@ -1072,7 +1073,11 @@ async function createGame(assets: Assets): Promise<Game> {
     player.pos.y = groundAt(player.pos.x, player.pos.z);
     // Facing away from the house, as if he had just walked out.
     const out = villageShown?.buildings[1];
-    if (out) facing = out.rot;
+    if (out) {
+      facing = out.rot;
+      // The camera comes round behind him too, so pushing forward walks away from the door, not back in.
+      camYaw = out.rot + Math.PI;
+    }
     camTarget.copy(player.pos);
     inside = null;
     if (!visiting) {
@@ -1131,6 +1136,8 @@ async function createGame(assets: Assets): Promise<Game> {
         wall: Number.isInteger(msg.wall) ? Math.abs(msg.wall) : 0,
         floor: Number.isInteger(msg.floor) ? Math.abs(msg.floor) : 0,
       });
+    } else if (msg.t === 'tag') {
+      if (typeof msg.it === 'string' && Number.isFinite(msg.s)) startTag(msg.it, Math.min(120, Math.max(0, msg.s)));
     } else if (msg.t === 'race') {
       if (villageShown && Math.hypot(villageShown.x - msg.x, villageShown.z - msg.z) < 5 && !race) {
         startRace(true);
@@ -1978,7 +1985,11 @@ async function createGame(assets: Assets): Promise<Game> {
   const undoStack: Cell[][] = [];
   let stamp = '';
   let extraBlock = 0;
-  const currentBlock = (): number => extraBlock || HOTBAR[Math.max(0, tool - FIRST_BLOCK)];
+  const currentBlock = (): number => {
+    // A roof slope rises away from the builder, whichever way he is facing.
+    if (extraBlock === SLOPE) return SLOPE + ((Math.round(facing / (Math.PI / 2)) + 2 + 400) % 4);
+    return extraBlock || HOTBAR[Math.max(0, tool - FIRST_BLOCK)];
+  };
 
   /** Change some cells, tell friends, and remember how to undo it. Returns how many changed. */
   function edit(cells: Cell[], remember = true): number {
@@ -2130,6 +2141,14 @@ async function createGame(assets: Assets): Promise<Game> {
     if (tool < FIRST_BLOCK) selectTool(FIRST_BLOCK);
     lightKit(stamp ? b : null);
   });
+  // Roof slopes, windows and doors (which can be walked through).
+  for (const [icon, type] of [['📐', SLOPE], ['🪟', GLASS], ['🚪', DOOR]] as [string, number][]) {
+    kitButton(icon, () => {
+      selectTool(FIRST_BLOCK);
+      extraBlock = type;
+      toolButtons.forEach((b) => b.classList.remove('selected'));
+    });
+  }
   onPickTool = () => {
     // Choosing from the hotbar goes back to its own colours and single blocks.
     extraBlock = 0;
@@ -2707,6 +2726,55 @@ async function createGame(assets: Assets): Promise<Game> {
     }
   }
 
+  // ---- tag with friends: whoever is "it" passes it on by touching someone ----
+  let tagIt = '';
+  let tagEnds = 0;
+  let tagImmune = 0;
+  function startTag(it: string, seconds: number): void {
+    const fresh = tagIt === '';
+    tagIt = it;
+    tagEnds = now + seconds;
+    // A moment's grace so it cannot be passed straight back.
+    tagImmune = now + 2.5;
+    if (it === selfId) {
+      toast('🔴 You are it!');
+      speak(fresh ? 'You are it! Catch a friend!' : 'Tag! You are it!');
+    } else {
+      peers.emote(it, '🔴');
+      toast(`🏃 ${peers.who(it)?.name || 'A friend'} is it. Run!`);
+      if (fresh) speak('Run! Do not get caught!');
+    }
+    sfx.chirp();
+  }
+  $('tag-btn').addEventListener('click', () => {
+    if (!net.connected || peers.count === 0) {
+      speak('Tag needs a friend. Play together first!');
+      return;
+    }
+    net.send({ t: 'tag', it: selfId, s: 90 });
+    startTag(selfId, 90);
+  });
+  function updateTag(): void {
+    if (!tagIt) return;
+    const left = tagEnds - now;
+    if (left <= 0 || !net.connected) {
+      toast(tagIt === selfId ? '🔴 You were it at the end!' : '🏆 You got away!');
+      sfx.win();
+      tagIt = '';
+      raceEl.hidden = race === null;
+      return;
+    }
+    raceEl.hidden = false;
+    raceEl.textContent = `${tagIt === selfId ? '🔴' : '🏃'} ${Math.ceil(left)}`;
+    if (tagIt === selfId && now > tagImmune) {
+      const caught = peers.nearest(player.pos, 2.4);
+      if (caught) {
+        net.send({ t: 'tag', it: caught.id, s: left });
+        startTag(caught.id, left);
+      }
+    }
+  }
+
   /** The smaller things going on around the hero: caves, maze treasure, the race, fishing and letters. */
   function updateExtras(who: THREE.Vector3): void {
     const place = nearestVillage(who.x, who.z);
@@ -2780,6 +2848,7 @@ async function createGame(assets: Assets): Promise<Game> {
       }
     }
     updateLetters(who);
+    updateTag();
   }
 
   // ---- the bag: what he is carrying and what he owns ----
@@ -3087,6 +3156,7 @@ async function createGame(assets: Assets): Promise<Game> {
         finishGoal: () => {
           if (bonus) bonus.start -= 99;
         },
+        blocksApi: () => blocks,
         peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {

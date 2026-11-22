@@ -47,6 +47,8 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Backups:** the grown-ups panel has **Back up** and **Restore**, which keep the save on your own Cloudflare Worker under the player's name, so it can be moved to another device with the same helper address, family code and name. With the helper set up it also backs up by itself every three minutes. **Save to file** and **Load file** do the same without a Worker.
 - **Village names and differences:** each village has its own name, announced on arrival. Not every wandering townsperson lives in every village, and each market stocks a different selection of hats and furniture.
 - **Racing together:** when a friend in the same village starts the ring race, it starts for everyone there, and a message shows when someone finishes.
+- **Roofs, windows and doors:** the builder's kit also has a roof slope (📐, which rises away from him whichever way he faces), a glass window (🪟) and a door (🚪) that can be walked through.
+- **Tag:** with friends in the room, 🏃 in the menu starts a 90-second game. Whoever is "it" passes it on by touching someone; a timer shows at the top.
 - **Copying a build:** in the builder's kit, 📸 remembers whatever is built near him and 🖼️ builds it again wherever he taps.
 - **Menu:** the ☰ button at the top opens everything that is not needed every second: 🏡 home, 🚗 vehicles, 🎒 bag, 🧰 builder's kit, 🧩 program Bolt, 😀 emoji and 👫 play together.
 - **Home button:** 🏡 in the menu takes him straight to his own front door in the nearest village, from anywhere, including indoors and underground.
@@ -59,7 +61,7 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Mazes:** the 🏛️ on the map is a stone maze with a big treasure chest in the middle (20 coins and 3 stars). The way in is on one side. The first is north of the start.
 - **Ring race:** every village has a 🏁 flag. Tapping the button there starts a race through eight rings round the village, on foot or in a car, with 90 seconds on the clock. Faster pays more coins.
 - **Fishing:** stand on a shore facing the water and a 🎣 button appears. Cast, wait for the float to dip (the button turns to ❗), then tap to reel in. Each fish is 2 coins.
-- **His house:** one house in each village is his. It has a 🏡 sign floating over it with his name, shows as 🏡 on the map, and has a front door that swings open as he walks up. Walking through it takes him inside; walking to the door in the room takes him back out. Inside is his room, the same one from every village.
+- **His house:** one house in each village is his. It has a 🏡 sign floating over it with his name and shows as 🏡 on the map. Its front door faces the village well; walking up to it takes him inside, with a fade; walking to the door in the room takes him back out. Inside is his room, the same one from every village.
 - **Arranging the room:** tap a piece of furniture to pick it up (it lifts), then tap the floor to put it there. Tap a picked-up piece again to turn it. The two buttons at the top right change the wall and floor colours. It all stays where he leaves it. The room starts with a bed and a rug; a lamp, shelf, cabinet, couch and table are sold at the market.
 - **Friends' houses:** when friends are in the room, the next houses along in the village become theirs, each with a sign showing their animal face and name. Walking in shows their room as they arranged it, to look at but not change. Friends are only drawn when in the same place: outdoors together, or in the same house.
 - **Away:** a 💤 shows over anyone who has not touched the controls for three minutes, and skeletons leave them alone.
@@ -156,7 +158,7 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 11. Walk-in doors and caves, weather, airstrip and plane, builder's kit (done)
 12. A menu, a home button, ongoing goals, skeletons that respect walls (done)
 13. Backups, village differences, stone walls, skeletons that go round walls, shared race, copying builds (done)
-14. Dungeon props and torches, slopes and windows for building, more to do with friends
+14. Roofs, windows and doors, dungeon torches, tag with friends, cottage doors facing the village (done)
 
 ## Credits
 

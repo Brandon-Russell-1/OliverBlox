@@ -59,6 +59,8 @@ export type NetMessage =
   // A race started in a village, and someone finishing it.
   | { t: 'race'; x: number; z: number }
   | { t: 'racewon'; n: string }
+  // A game of tag: who is "it" now and how many seconds are left.
+  | { t: 'tag'; it: string; s: number }
   // How a player has furnished their house, so friends can visit it.
   | { t: 'home'; owned: string[]; layout: Record<string, [number, number, number]>; wall: number; floor: number };
 

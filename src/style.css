@@ -346,7 +346,7 @@ body:not(.touch) #fly {
   bottom: calc(96px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   display: grid;
-  grid-template-columns: repeat(9, minmax(32px, 56px));
+  grid-template-columns: repeat(10, minmax(30px, 56px));
   gap: 8px;
   max-width: calc(100vw - 16px);
   padding: 10px;

@@ -36,6 +36,44 @@ export const EXTRA_BLOCKS = [9, 10, 11, 12, 13, 14, 15, 16];
 /** Blocks Oliver can place, in hotbar order. */
 export const HOTBAR = [RED, ORANGE, YELLOW, GREEN, BLUE, PURPLE, WHITE, BRICK];
 
+/** Roof slopes come in four directions: 20 rises toward -z, then each next one is a quarter turn on. */
+export const SLOPE = 20;
+export const GLASS = 24;
+/** A door can be walked through. */
+export const DOOR = 25;
+
+type Shape = 'cube' | 'wedge' | 'glass' | 'door';
+const shapeOf = (type: number): Shape =>
+  type >= SLOPE && type < SLOPE + 4 ? 'wedge' : type === GLASS ? 'glass' : type === DOOR ? 'door' : 'cube';
+
+/** A block cut corner to corner: full height along the -z edge, sloping down to nothing at +z. */
+function wedgeGeometry(): THREE.BufferGeometry {
+  const A = [-0.5, -0.5, -0.5];
+  const B = [0.5, -0.5, -0.5];
+  const C = [0.5, -0.5, 0.5];
+  const D = [-0.5, -0.5, 0.5];
+  const E = [-0.5, 0.5, -0.5];
+  const F = [0.5, 0.5, -0.5];
+  const faces = [A, B, C, A, C, D, A, E, F, A, F, B, E, D, C, E, C, F, A, D, E, B, F, C];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(faces.flat()), 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+const GEOMETRY: Record<Shape, THREE.BufferGeometry> = {
+  cube: new THREE.BoxGeometry(1, 1, 1),
+  wedge: wedgeGeometry(),
+  glass: new THREE.BoxGeometry(1, 1, 0.2),
+  door: new THREE.BoxGeometry(0.9, 1, 0.16),
+};
+const MATERIAL: Record<Shape, THREE.Material> = {
+  cube: new THREE.MeshLambertMaterial({ color: 0xffffff }),
+  wedge: new THREE.MeshLambertMaterial({ color: 0xb5523b }),
+  glass: new THREE.MeshLambertMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.5 }),
+  door: new THREE.MeshLambertMaterial({ color: 0x7a4f2a }),
+};
+
 export interface RayHit {
   /** 'block' hits can be removed; 'ground' hits can only be built on. */
   kind: 'block' | 'ground';
@@ -53,10 +91,8 @@ const EPS = 1e-4;
 /** One-metre building blocks placed by the player anywhere in the endless world. */
 export class Blocks {
   readonly map = new Map<string, number>();
-  private mesh: THREE.InstancedMesh | null = null;
-  private capacity = 0;
-  private readonly geometry = new THREE.BoxGeometry(1, 1, 1);
-  private readonly material = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  /** One batch of instances for each shape of block. */
+  private meshes: Partial<Record<Shape, THREE.InstancedMesh>> = {};
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -98,32 +134,39 @@ export class Blocks {
   }
 
   private rebuild(): void {
-    const n = this.map.size;
-    if (!this.mesh || n > this.capacity) {
-      if (this.mesh) {
-        this.scene.remove(this.mesh);
-        this.mesh.dispose();
-      }
-      this.capacity = Math.max(256, n * 2);
-      this.mesh = new THREE.InstancedMesh(this.geometry, this.material, this.capacity);
-      this.mesh.frustumCulled = false;
-      this.mesh.castShadow = true;
-      this.mesh.receiveShadow = true;
-      this.scene.add(this.mesh);
+    const groups: Record<Shape, [number, number, number, number][]> = { cube: [], wedge: [], glass: [], door: [] };
+    for (const [key, type] of this.map) {
+      const [x, y, z] = key.split(',').map(Number);
+      groups[shapeOf(type)].push([x, y, z, type]);
     }
     const m = new THREE.Matrix4();
     const c = new THREE.Color();
-    let i = 0;
-    for (const [key, t] of this.map) {
-      const [x, y, z] = key.split(',').map(Number);
-      m.setPosition(x + 0.5, y + 0.5, z + 0.5);
-      this.mesh.setMatrixAt(i, m);
-      this.mesh.setColorAt(i, c.setHex(BLOCK_COLORS[t] ?? 0xffffff));
-      i++;
+    for (const shape of Object.keys(groups) as Shape[]) {
+      const list = groups[shape];
+      let mesh = this.meshes[shape];
+      if (!mesh || list.length > mesh.instanceMatrix.count) {
+        if (mesh) {
+          this.scene.remove(mesh);
+          mesh.dispose();
+        }
+        mesh = new THREE.InstancedMesh(GEOMETRY[shape], MATERIAL[shape], Math.max(64, list.length * 2));
+        mesh.frustumCulled = false;
+        mesh.castShadow = shape !== 'glass';
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        this.meshes[shape] = mesh;
+      }
+      list.forEach(([x, y, z, type], i) => {
+        // Slopes are turned to face one of four ways; everything else sits square.
+        m.makeRotationY(shape === 'wedge' ? ((type - SLOPE) * Math.PI) / 2 : 0);
+        m.setPosition(x + 0.5, y + 0.5, z + 0.5);
+        mesh.setMatrixAt(i, m);
+        mesh.setColorAt(i, c.setHex(shape === 'cube' ? (BLOCK_COLORS[type] ?? 0xffffff) : 0xffffff));
+      });
+      mesh.count = list.length;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-    this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 
   /** Does an upright box with its feet at (x, y, z) overlap any block? */
@@ -138,7 +181,9 @@ export class Blocks {
     for (let cy = y0; cy <= y1; cy++) {
       for (let cz = z0; cz <= z1; cz++) {
         for (let cx = x0; cx <= x1; cx++) {
-          if (this.has(cx, cy, cz)) return true;
+          // Doors are there to be walked through.
+          const type = this.map.get(`${cx},${cy},${cz}`);
+          if (type !== undefined && type !== DOOR) return true;
         }
       }
     }

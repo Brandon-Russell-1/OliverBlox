@@ -268,6 +268,19 @@ function wallDef(height: number): PropDef {
     height,
   };
 }
+/** A torch flame: a small bright block that glows whatever the light. */
+const FLAME: PropDef = (() => {
+  const g = new THREE.BoxGeometry(0.35, 0.6, 0.35).toNonIndexed();
+  return {
+    pos: g.attributes.position.array as Float32Array,
+    norm: g.attributes.normal.array as Float32Array,
+    uv: g.attributes.uv.array as Float32Array,
+    count: g.attributes.position.count,
+    radius: 0.2,
+    height: 0.6,
+  };
+})();
+const FLAME_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xffa040, fog: false });
 const WALL = wallDef(5);
 const WALL_TALL = wallDef(DUNGEON_HEIGHT + 0.5);
 /** A stone-block pattern drawn once, so walls read as built rather than as grey slabs. */
@@ -368,6 +381,7 @@ interface Chunk {
   props: THREE.Mesh | null;
   buildings: THREE.Mesh | null;
   walls: THREE.Mesh | null;
+  flames: THREE.Mesh | null;
   colliders: Collider[];
   star: Star | null;
   chest: Star | null;
@@ -568,6 +582,7 @@ export class Terrain {
     for (const b of village?.buildings ?? []) {
       if (b.x < ox || b.x >= ox + CHUNK || b.z < oz || b.z >= oz + CHUNK) continue;
       const def = this.props.buildings[b.def];
+      // The models' front doors are on their +z side, which this turns to face the middle of the village.
       built.push({ def, x: b.x, y: groundAt(b.x, b.z) - 0.15, z: b.z, scale: b.scale, rot: b.rot });
       colliders.push({ x: b.x, z: b.z, r: def.radius * b.scale * 0.8, top: groundAt(b.x, b.z) + def.height * b.scale });
     }
@@ -581,6 +596,16 @@ export class Terrain {
       for (let t = -4; t <= 4.01; t += 1.6) {
         colliders.push({ x: w.x + Math.cos(w.rot) * t, z: w.z - Math.sin(w.rot) * t, r: 0.85, top: groundAt(w.x, w.z) + (village?.kind === 'dungeon' ? 12 : 5) });
       }
+    }
+
+    // ---- torches on the dungeon walls: the only glow down there besides his own ----
+    const flames: Placement[] = [];
+    if (village?.kind === 'dungeon') {
+      walled.forEach((w, i) => {
+        if (i % 2 !== 0) return;
+        const side = i % 4 === 0 ? 0.85 : -0.85;
+        flames.push({ def: FLAME, x: w.x + Math.sin(w.rot) * side, y: w.y + 3.6, z: w.z + Math.cos(w.rot) * side, scale: 1, rot: 0 });
+      });
     }
 
     // ---- star ----
@@ -633,6 +658,7 @@ export class Terrain {
       props: this.bake(placements, this.props.material),
       buildings: this.bake(built, this.props.buildingMaterial),
       walls: this.bake(walled, WALL_MATERIAL),
+      flames: this.bake(flames, FLAME_MATERIAL),
       colliders,
       star,
       chest,
@@ -681,7 +707,7 @@ export class Terrain {
   private unload(c: Chunk): void {
     this.scene.remove(c.ground);
     c.ground.geometry.dispose();
-    for (const mesh of [c.props, c.buildings, c.walls]) {
+    for (const mesh of [c.props, c.buildings, c.walls, c.flames]) {
       if (!mesh) continue;
       this.scene.remove(mesh);
       mesh.geometry.dispose();
