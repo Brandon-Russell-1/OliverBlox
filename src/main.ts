@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
-import { Terrain, groundAt, nearestVillage, villagesNear, linkedPlace, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
+import { Terrain, groundAt, nearestVillage, villagesNear, linkedPlace, AIRSTRIP, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
 import { MiniMap, type MapIcon } from './map';
 import { Home, ROOM, type Spot } from './home';
 import { Coder } from './coder';
 import { Net, Peers } from './net';
-import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
+import { Blocks, HOTBAR, BLOCK_COLORS, EXTRA_BLOCKS } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
 import { Animals, Pet, type Animal } from './animals';
@@ -20,7 +20,7 @@ import { loadSettings, saveSettings, addPlayTime, minutesToday } from './setting
 import { makeStar } from './models';
 import { makeHat } from './hats';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
-import { sfx, speak, unlockAudio } from './audio';
+import { sfx, speak, unlockAudio, setRain, thunder } from './audio';
 import { makeRobot, makeClouds } from './models';
 
 const SAVE_KEY = 'oliverblox-save-v2';
@@ -63,7 +63,7 @@ const HERO_ANIMS = [
 
 interface GarageItem {
   name: string;
-  kind: 'car' | 'boat';
+  kind: 'car' | 'boat' | 'plane';
   icon: string;
   /** Coins to unlock it; 0 for the ones he starts with. */
   price: number;
@@ -77,6 +77,7 @@ const GARAGE: GarageItem[] = [
   { name: 'truck', kind: 'car', icon: '🛻', price: 10 },
   { name: 'firetruck', kind: 'car', icon: '🚒', price: 12 },
   { name: 'race', kind: 'car', icon: '🏎️', price: 20 },
+  { name: 'plane', kind: 'plane', icon: '✈️', price: 0 },
   { name: 'boat-row-small', kind: 'boat', icon: '🚣', price: 0 },
   { name: 'boat-tug-a', kind: 'boat', icon: '🛥️', price: 10 },
   { name: 'boat-sail-a', kind: 'boat', icon: '⛵', price: 12 },
@@ -225,6 +226,72 @@ const SKY = {
   moon: new THREE.Color(0x9fb4ff),
 };
 const skyUniforms = sky.material.uniforms;
+// ---------- weather ----------
+/** Seconds the world has been running. Rain comes and goes with it, and friends share the same clock. */
+let worldTime = 120;
+/** 0 dry, 1 pouring. */
+let rain = 0;
+let lightning = 0;
+let thunderIn = 8;
+const DROPS = 700;
+const rainPositions = new Float32Array(DROPS * 6);
+for (let i = 0; i < DROPS; i++) {
+  const x = (Math.random() - 0.5) * 70;
+  const y = Math.random() * 34 - 6;
+  const z = (Math.random() - 0.5) * 70;
+  rainPositions.set([x, y, z, x, y - 0.9, z], i * 6);
+}
+const rainGeometry = new THREE.BufferGeometry();
+rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+const rainMaterial = new THREE.LineBasicMaterial({ color: 0xcfe2ff, transparent: true, opacity: 0, fog: false });
+const rainMesh = new THREE.LineSegments(rainGeometry, rainMaterial);
+rainMesh.frustumCulled = false;
+rainMesh.visible = false;
+scene.add(rainMesh);
+const STORM = new THREE.Color(0x7d8794);
+
+/** Rain showers that roll in and out, with thunder and lightning in the heavy ones. Call after updateDay. */
+function updateWeather(dt: number, sheltered: boolean): void {
+  worldTime += dt;
+  const wet = Math.sin(worldTime / 71) + Math.sin(worldTime / 29) > 1.2;
+  rain += ((wet ? 1 : 0) - rain) * Math.min(1, dt * 0.35);
+  const falling = sheltered ? 0 : rain;
+  rainMesh.visible = falling > 0.03;
+  setRain(falling);
+  if (rainMesh.visible) {
+    rainMaterial.opacity = 0.5 * falling;
+    for (let i = 0; i < DROPS; i++) {
+      let y = rainPositions[i * 6 + 1] - 40 * dt;
+      if (y < -6) y += 34;
+      rainPositions[i * 6 + 1] = y;
+      rainPositions[i * 6 + 4] = y - 0.9;
+    }
+    rainGeometry.attributes.position.needsUpdate = true;
+    rainMesh.position.copy(camera.position);
+    // Grey the sky and draw the fog in.
+    skyUniforms.top.value.lerp(STORM, falling * 0.75);
+    skyUniforms.bottom.value.lerp(STORM, falling * 0.6);
+    const fog = scene.fog as THREE.Fog;
+    fog.color.copy(skyUniforms.bottom.value);
+    fog.far = 198 - 70 * falling;
+    sun.intensity *= 1 - 0.55 * falling;
+    hemi.intensity *= 1 - 0.25 * falling;
+  }
+  if (falling > 0.7) {
+    thunderIn -= dt;
+    if (thunderIn <= 0) {
+      thunderIn = 7 + Math.random() * 14;
+      lightning = 1;
+      // Light first, then the rumble, the way a real storm does it.
+      window.setTimeout(thunder, 500 + Math.random() * 900);
+    }
+  }
+  if (lightning > 0) {
+    lightning = Math.max(0, lightning - dt * 3.5);
+    hemi.intensity += lightning * 3;
+  }
+}
+
 /** True while the hero is down in a dungeon: no sky, no sun, only his torch. */
 let underground = false;
 /** Starts in the morning. */
@@ -397,6 +464,8 @@ showQuests();
 
 let tool = SWORD;
 let onToolChange: () => void = () => {};
+/** Called when the player taps a hotbar slot themselves. */
+let onPickTool: () => void = () => {};
 const toolButtons: HTMLButtonElement[] = [];
 function selectTool(n: number): void {
   if (n < 0 || n >= FIRST_BLOCK + HOTBAR.length) return;
@@ -411,6 +480,7 @@ function selectTool(n: number): void {
   else b.style.background = `#${BLOCK_COLORS[HOTBAR[i - FIRST_BLOCK]].toString(16).padStart(6, '0')}`;
   b.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    onPickTool();
     selectTool(i);
   });
   $('hotbar').appendChild(b);
@@ -836,7 +906,8 @@ async function createGame(assets: Assets): Promise<Game> {
 
   // ---- playing together: other players in the same room, and shared building ----
   const net = new Net();
-  const peers = new Peers(scene, assets.clips, assets.pets, new Set(GARAGE.map((g) => g.name)));
+  // The plane has no model file, so friends in one are drawn as their hero.
+  const peers = new Peers(scene, assets.clips, assets.pets, new Set(GARAGE.filter((g) => g.kind !== 'plane').map((g) => g.name)));
   const greeted = new Set<string>();
   let netTimer = 0;
   net.onMessage = (from, msg) => {
@@ -880,6 +951,8 @@ async function createGame(assets: Assets): Promise<Game> {
       if (enemies.remote) {
         enemies.apply(msg);
         if (typeof msg.c === 'number' && Number.isFinite(msg.c) && Math.abs(msg.c - dayClock) > 3) dayClock = msg.c % DAY_LENGTH;
+        // The same weather for everyone.
+        if (typeof msg.w === 'number' && Number.isFinite(msg.w) && Math.abs(msg.w - worldTime) > 3) worldTime = msg.w;
       }
     } else if (msg.t === 'dmg') {
       if (!enemies.remote) enemies.damageById(msg.id, msg.n, msg.x, msg.z, enemyContext);
@@ -953,7 +1026,7 @@ async function createGame(assets: Assets): Promise<Game> {
       // On the ground, or on top of whatever is already stacked in that square.
       let y = Math.ceil(groundAt(x + 0.5, z + 0.5) - 0.3);
       while (blocks.has(x, y, z)) y++;
-      const k = tool >= FIRST_BLOCK ? HOTBAR[tool - FIRST_BLOCK] : HOTBAR[0];
+      const k = tool >= FIRST_BLOCK ? currentBlock() : HOTBAR[0];
       if (!blocks.set(x, y, z, k)) return;
       net.send({ t: 'b', x, y, z, k });
       if (quests.add('blocks', 1, k)) showQuests();
@@ -1028,16 +1101,25 @@ async function createGame(assets: Assets): Promise<Game> {
   const vehicle = new THREE.Group();
   vehicle.rotation.order = 'YXZ';
   scene.add(vehicle);
-  let vehicleKind: 'car' | 'boat' = 'car';
+  let vehicleKind: 'car' | 'boat' | 'plane' = 'car';
+  let propeller: THREE.Object3D | null = null;
   let wheels: THREE.Object3D[] = [];
   let vehicleToken = 0;
 
   async function setVehicle(item: GarageItem): Promise<void> {
     const token = ++vehicleToken;
-    const gltf = await loadModel(`${item.kind}/${item.name}.glb`);
-    if (token !== vehicleToken) return;
-    const model = gltf.scene.clone(true);
-    model.scale.setScalar(VEHICLE_SCALE);
+    let model: THREE.Object3D;
+    propeller = null;
+    if (item.kind === 'plane') {
+      // No aeroplane in the model packs, so this one is built from simple shapes.
+      model = makePlane();
+      propeller = model.getObjectByName('propeller') ?? null;
+    } else {
+      const gltf = await loadModel(`${item.kind}/${item.name}.glb`);
+      if (token !== vehicleToken) return;
+      model = gltf.scene.clone(true);
+      model.scale.setScalar(VEHICLE_SCALE);
+    }
     vehicle.clear();
     vehicle.add(model);
     wheels = [];
@@ -1166,6 +1248,10 @@ async function createGame(assets: Assets): Promise<Game> {
   }
 
   function exitVehicle(): void {
+    if (vehicleKind === 'plane' && carPos.y > Math.max(groundAt(carPos.x, carPos.z), SEA_LEVEL) + 0.6) {
+      speak('Land the plane first!');
+      return;
+    }
     driving = false;
     carSpeed = 0;
     // Step out on the left side.
@@ -1346,7 +1432,31 @@ async function createGame(assets: Assets): Promise<Game> {
 
   // ---- garage: any car or boat, wherever he is ----
   /** A spot for the new vehicle: land ahead for cars, the nearest water for boats. */
-  function findSpot(kind: 'car' | 'boat'): THREE.Vector3 | null {
+  /** A little propeller plane made of boxes: fuselage, wings, tail and a spinning propeller. */
+  function makePlane(): THREE.Object3D {
+    const plane = new THREE.Group();
+    const part = (w: number, h: number, d: number, color: number, x: number, y: number, z: number): THREE.Mesh => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color }));
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      plane.add(mesh);
+      return mesh;
+    };
+    part(1.3, 1.3, 5, 0xe8413c, 0, 0.4, 0);
+    part(1.1, 0.7, 1.3, 0xbfe9ff, 0, 1.2, 0.5);
+    part(9, 0.18, 1.6, 0xf4f6fa, 0, 0.5, 0.6);
+    part(3.4, 0.16, 1, 0xf4f6fa, 0, 0.6, -2.3);
+    part(0.16, 1.3, 1, 0xe8413c, 0, 1.2, -2.3);
+    part(0.5, 0.5, 0.3, 0x2b2d33, 0, 0.4, 2.6);
+    const prop = part(2.6, 0.22, 0.08, 0x2b2d33, 0, 0.4, 2.8);
+    prop.name = 'propeller';
+    for (const x of [-0.9, 0.9]) part(0.25, 0.7, 0.7, 0x2b2d33, x, -0.55, 0.6);
+    return plane;
+  }
+
+  function findSpot(kind: 'car' | 'boat' | 'plane'): THREE.Vector3 | null {
+    // The plane always waits at the west end of the airstrip, pointing down the runway.
+    if (kind === 'plane') return new THREE.Vector3(AIRSTRIP.x - AIRSTRIP.halfLength + 8, AIRSTRIP.h, AIRSTRIP.z);
     const fits = (x: number, z: number): boolean =>
       kind === 'car' ? groundAt(x, z) > SEA_LEVEL - 0.4 : groundAt(x, z) < SEA_LEVEL - 1.3;
     const p = player.pos;
@@ -1395,7 +1505,13 @@ async function createGame(assets: Assets): Promise<Game> {
           }
           void setVehicle(item).then(() => {
             carPos.copy(spot);
-            carHeading = facing;
+            carHeading = item.kind === 'plane' ? Math.PI / 2 : facing;
+            // The plane is parked at the airstrip: he has to go there to fly it.
+            if (item.kind === 'plane' && player.pos.distanceTo(spot) > 30) {
+              speak('Your plane is waiting at the airstrip! Follow the plane on the map.');
+              dirty = true;
+              return;
+            }
             enterVehicle();
             sfx.honk();
             dirty = true;
@@ -1605,9 +1721,138 @@ async function createGame(assets: Assets): Promise<Game> {
     if (!enemies.remote && net.connected && netEnemyTimer <= 0) {
       netEnemyTimer = 0.12;
       // The host's clock is everyone's clock, so it is day or night for all at once.
-      net.send({ t: 'en', c: Math.round(dayClock), ...enemies.snapshot() });
+      net.send({ t: 'en', c: Math.round(dayClock), w: Math.round(worldTime), ...enemies.snapshot() });
     }
   }
+
+  // ---- the builder's kit: more materials, ready-made shapes, and undo ----
+  type Cell = [number, number, number, number];
+  /** Each edit as the cells it changed and what they were before, newest last. */
+  const undoStack: Cell[][] = [];
+  let stamp = '';
+  let extraBlock = 0;
+  const currentBlock = (): number => extraBlock || HOTBAR[Math.max(0, tool - FIRST_BLOCK)];
+
+  /** Change some cells, tell friends, and remember how to undo it. Returns how many changed. */
+  function edit(cells: Cell[], remember = true): number {
+    const before: Cell[] = [];
+    const changed: Cell[] = [];
+    for (const [x, y, z, t] of cells) {
+      const was = blocks.map.get(`${x},${y},${z}`) ?? 0;
+      if (was === t) continue;
+      before.push([x, y, z, was]);
+      changed.push([x, y, z, t]);
+    }
+    if (changed.length === 0) return 0;
+    blocks.setMany(changed);
+    net.send({ t: 'B', list: changed });
+    if (remember) {
+      undoStack.push(before);
+      if (undoStack.length > 30) undoStack.shift();
+    }
+    return changed.length;
+  }
+
+  /** The cells of each ready-made shape: x across, y up, z away from the builder. */
+  const SHAPES: Record<string, () => [number, number, number][]> = {
+    wall: () => {
+      const out: [number, number, number][] = [];
+      for (let x = -2; x <= 2; x++) for (let y = 0; y < 3; y++) out.push([x, y, 0]);
+      return out;
+    },
+    tower: () => {
+      const out: [number, number, number][] = [];
+      for (let y = 0; y < 6; y++) for (let x = -1; x <= 1; x++) for (let z = 0; z < 3; z++) if (x !== 0 || z !== 1) out.push([x, y, z]);
+      return out;
+    },
+    stairs: () => {
+      const out: [number, number, number][] = [];
+      for (let z = 0; z < 5; z++) for (let y = 0; y <= z; y++) for (let x = -1; x <= 1; x++) out.push([x, y, z]);
+      return out;
+    },
+    hut: () => {
+      const out: [number, number, number][] = [];
+      for (let x = -2; x <= 2; x++) {
+        for (let z = 0; z < 5; z++) {
+          const edge = Math.abs(x) === 2 || z === 0 || z === 4;
+          // A doorway in the middle of the near wall.
+          for (let y = 0; y < 3; y++) if (edge && !(x === 0 && z === 0 && y < 2)) out.push([x, y, z]);
+          out.push([x, 3, z]);
+        }
+      }
+      return out;
+    },
+    bridge: () => {
+      const out: [number, number, number][] = [];
+      for (let z = 0; z < 8; z++) for (let x = -1; x <= 1; x++) out.push([x, 0, z]);
+      for (let z = 0; z < 8; z++) for (const x of [-2, 2]) out.push([x, 0, z], [x, 1, z]);
+      return out;
+    },
+    pyramid: () => {
+      const out: [number, number, number][] = [];
+      for (let y = 0; y < 4; y++) for (let x = -3 + y; x <= 3 - y; x++) for (let z = y; z <= 6 - y; z++) out.push([x, y, z]);
+      return out;
+    },
+  };
+  /** Build a whole shape at the tapped spot, facing the way the hero faces. */
+  function placeStamp(bx: number, by: number, bz: number): void {
+    const turns = ((Math.round(facing / (Math.PI / 2)) % 4) + 4) % 4;
+    const k = currentBlock();
+    const cells: Cell[] = SHAPES[stamp]().map(([x, y, z]) => {
+      // Quarter turns: away from the builder is +z, +x, -z or -x.
+      const wx = [x, z, -x, -z][turns];
+      const wz = [z, -x, -z, x][turns];
+      return [bx + wx, by + y, bz + wz, k];
+    });
+    const n = edit(cells);
+    if (n === 0) return;
+    if (quests.add('blocks', n, k)) showQuests();
+    sfx.place();
+    sfx.win();
+    dirty = true;
+  }
+  const buildEl = $('build');
+  const kitButtons: HTMLButtonElement[] = [];
+  const kitButton = (label: string, onTap: (b: HTMLButtonElement) => void, color = 0): void => {
+    const b = document.createElement('button');
+    if (color) b.style.background = `#${color.toString(16).padStart(6, '0')}`;
+    else b.textContent = label;
+    b.addEventListener('click', () => onTap(b));
+    buildEl.appendChild(b);
+    kitButtons.push(b);
+  };
+  const lightKit = (on: HTMLButtonElement | null): void => kitButtons.forEach((b) => b.classList.toggle('on', b === on));
+  kitButton('↩️', () => {
+    const last = undoStack.pop();
+    if (!last) return;
+    // Putting things back is not itself something to undo.
+    edit(last, false);
+    sfx.remove();
+    dirty = true;
+  });
+  for (const [key, icon] of [['wall', '🧱'], ['tower', '🗼'], ['stairs', '🪜'], ['hut', '🏠'], ['bridge', '🌉'], ['pyramid', '🔺']]) {
+    kitButton(icon, (b) => {
+      stamp = stamp === key ? '' : key;
+      if (tool < FIRST_BLOCK) selectTool(FIRST_BLOCK);
+      lightKit(stamp ? b : null);
+    });
+  }
+  for (const type of EXTRA_BLOCKS) {
+    kitButton('', () => {
+      selectTool(FIRST_BLOCK);
+      extraBlock = type;
+      toolButtons.forEach((b) => b.classList.remove('selected'));
+    }, BLOCK_COLORS[type]);
+  }
+  onPickTool = () => {
+    // Choosing from the hotbar goes back to its own colours and single blocks.
+    extraBlock = 0;
+    stamp = '';
+    lightKit(null);
+  };
+  $('build-btn').addEventListener('click', () => {
+    buildEl.hidden = !buildEl.hidden;
+  });
 
   // ---- building, or swinging if a weapon is in hand ----
   const ray = new THREE.Vector3();
@@ -1644,17 +1889,19 @@ async function createGame(assets: Assets): Promise<Game> {
       return;
     }
     if (tool === PICKAXE || button === 2) {
-      if (hit.kind === 'block' && blocks.set(hit.x, hit.y, hit.z, 0)) {
-        net.send({ t: 'b', x: hit.x, y: hit.y, z: hit.z, k: 0 });
+      if (hit.kind === 'block' && edit([[hit.x, hit.y, hit.z, 0]]) > 0) {
         sfx.remove();
         dirty = true;
       }
       return;
     }
+    if (stamp) {
+      placeStamp(hit.px, hit.py, hit.pz);
+      return;
+    }
     if (bodyTouchesCell(player, hit.px, hit.py, hit.pz)) return;
-    if (blocks.set(hit.px, hit.py, hit.pz, HOTBAR[tool - FIRST_BLOCK])) {
-      net.send({ t: 'b', x: hit.px, y: hit.py, z: hit.pz, k: HOTBAR[tool - FIRST_BLOCK] });
-      if (quests.add('blocks', 1, HOTBAR[tool - FIRST_BLOCK])) showQuests();
+    if (edit([[hit.px, hit.py, hit.pz, currentBlock()]]) > 0) {
+      if (quests.add('blocks', 1, currentBlock())) showQuests();
       sfx.place();
       dirty = true;
     }
@@ -1760,7 +2007,57 @@ async function createGame(assets: Assets): Promise<Game> {
   let carPitch = 0;
   let carRoll = 0;
 
+  let planeClimb = 0;
+  /**
+   * A small flight sim. Push forward to speed up along the ground; past take-off speed the
+   * up button climbs and the down button descends. Too slow in the air and it sinks back down.
+   */
+  function updatePlane(dt: number, controlled: boolean): void {
+    const floor = Math.max(groundAt(carPos.x, carPos.z), SEA_LEVEL);
+    const airborne = carPos.y > floor + 0.3;
+    const TAKE_OFF = 15;
+    if (controlled) {
+      if (input.moveZ > 0.1) carSpeed += 15 * dt;
+      else if (input.moveZ < -0.1) carSpeed -= 16 * dt;
+      else if (!airborne) carSpeed -= 5 * dt;
+      carSpeed = Math.min(36, Math.max(airborne ? 9 : 0, carSpeed));
+      carHeading -= input.moveX * (airborne ? 1.1 : 1.5 * Math.min(1, carSpeed / 6)) * dt;
+    } else if (!airborne) {
+      carSpeed = Math.max(0, carSpeed - 20 * dt);
+    }
+    // Lift needs speed: flying too slowly loses height however hard the up button is pressed.
+    let want = 0;
+    if (carSpeed >= TAKE_OFF) want = controlled ? ((input.jump ? 1 : 0) - (input.down ? 1 : 0)) * 10 : 0;
+    else if (airborne) want = -(TAKE_OFF - carSpeed) * 0.9 - 1;
+    planeClimb += (want - planeClimb) * Math.min(1, 3 * dt);
+    carPos.x += Math.sin(carHeading) * carSpeed * dt;
+    carPos.z += Math.cos(carHeading) * carSpeed * dt;
+    carPos.y = Math.min(160, carPos.y + planeClimb * dt);
+    const below = Math.max(groundAt(carPos.x, carPos.z), SEA_LEVEL);
+    if (carPos.y <= below) {
+      carPos.y = below;
+      planeClimb = Math.max(0, planeClimb);
+    }
+    if (terrain.collide(carPos, 2)) carSpeed *= 1 - Math.min(1, 4 * dt);
+    if (carSpeed > 0.1) dirty = true;
+
+    carPitch += (-planeClimb * 0.035 - carPitch) * Math.min(1, 5 * dt);
+    carRoll += ((airborne && controlled ? input.moveX * 0.55 : 0) - carRoll) * Math.min(1, 4 * dt);
+    vehicle.position.copy(carPos).setY(carPos.y + 0.9);
+    vehicle.rotation.set(carPitch, carHeading, carRoll);
+    if (propeller) propeller.rotation.z += (6 + carSpeed) * dt * 3;
+    if (controlled) {
+      let diff = carHeading + Math.PI - camYaw;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      camYaw += diff * Math.min(1, 3 * dt);
+    }
+  }
+
   function updateVehicle(dt: number, controlled: boolean): void {
+    if (vehicleKind === 'plane') {
+      updatePlane(dt, controlled);
+      return;
+    }
     const boat = vehicleKind === 'boat';
     const top = boat ? BOAT_MAX : CAR_MAX;
     if (controlled) {
@@ -2354,7 +2651,8 @@ async function createGame(assets: Assets): Promise<Game> {
   function updateMap(dt: number, who: THREE.Vector3): void {
     const icons: MapIcon[] = [];
     for (const s of terrain.stars) icons.push({ x: s.pos.x, z: s.pos.z, icon: '⭐' });
-    if (!driving) icons.push({ x: carPos.x, z: carPos.z, icon: vehicleKind === 'boat' ? '⛵' : '🚗' });
+    if (!driving) icons.push({ x: carPos.x, z: carPos.z, icon: vehicleKind === 'boat' ? '⛵' : vehicleKind === 'plane' ? '✈️' : '🚗', pin: vehicleKind === 'plane' });
+    icons.push({ x: AIRSTRIP.x, z: AIRSTRIP.z, icon: '🛫' });
     // Only the closest village is pinned to the rim, so the arrow to follow is never in doubt.
     const places = villagesNear(who.x, who.z);
     let closest: Village | null = null;
@@ -2401,6 +2699,11 @@ async function createGame(assets: Assets): Promise<Game> {
           const v = new THREE.Vector3(x, y, z).project(camera);
           return [(v.x * 0.5 + 0.5) * window.innerWidth, (-v.y * 0.5 + 0.5) * window.innerHeight];
         },
+        setWorld: (seconds: number) => {
+          worldTime = seconds;
+        },
+        airstrip: () => AIRSTRIP,
+        blocksMap: () => blocks.map,
         peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
@@ -2430,6 +2733,7 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          rain: +rain.toFixed(2),
           layout,
           wallColour,
           guide: guideStep,
@@ -2528,7 +2832,9 @@ async function createGame(assets: Assets): Promise<Game> {
             : fishing
               ? fishIcon
               : driving
-                ? '🚶'
+                ? vehicleKind === 'plane'
+                  ? '🛬'
+                  : '🚶'
                 : holeNear
                   ? holeNear.kind === 'cave'
                     ? '🕳️'
@@ -2544,7 +2850,9 @@ async function createGame(assets: Assets): Promise<Game> {
                         : nearVehicle()
                           ? vehicleKind === 'boat'
                             ? '⛵'
-                            : '🚗'
+                            : vehicleKind === 'plane'
+                              ? '✈️'
+                              : '🚗'
                           : peers.driverNear(player.pos, 6)
                             ? '🚙'
                             : canFish()
@@ -2554,8 +2862,13 @@ async function createGame(assets: Assets): Promise<Game> {
           actionShown = icon;
           actionEl.hidden = icon === '';
           actionEl.textContent = icon;
-          jumpEl.textContent = driving ? '📣' : '⬆️';
-          crawlEl.hidden = flyEl.hidden = driving;
+          // In the plane the two buttons are climb and descend.
+          const flyingPlane = driving && vehicleKind === 'plane';
+          jumpEl.textContent = driving && !flyingPlane ? '📣' : '⬆️';
+          flyEl.hidden = driving;
+          crawlEl.hidden = driving && !flyingPlane;
+          if (flyingPlane) crawlEl.textContent = '⬇️';
+          else if (!flying) crawlEl.textContent = '🐛';
         }
       } else {
         // Slow turntable of the hero behind the start screen.
@@ -2596,6 +2909,7 @@ async function createGame(assets: Assets): Promise<Game> {
       water.position.z = who.z;
       sun.target.position.copy(who);
       updateDay(dt);
+      updateWeather(dt, inside !== null || underground);
       sun.position.copy(who).add(SUN_OFFSET);
       for (const c of clouds.children) {
         c.position.x += dt * 1.5;

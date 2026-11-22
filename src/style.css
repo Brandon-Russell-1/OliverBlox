@@ -306,6 +306,43 @@ body:not(.touch) #fly {
   background: #c9f5d2;
 }
 
+#build-btn {
+  right: calc(454px + env(safe-area-inset-right));
+}
+
+#build {
+  position: fixed;
+  z-index: 6;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(8, minmax(36px, 56px));
+  gap: 8px;
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(20, 30, 80, 0.85);
+}
+
+#build[hidden] {
+  display: none;
+}
+
+#build button {
+  height: 52px;
+  border-radius: 12px;
+  border: 3px solid rgba(255, 255, 255, 0.4);
+  background: #fff;
+  font-size: 26px;
+  padding: 0;
+}
+
+#build button.on {
+  border-color: #3ddc5b;
+  background: #c9f5d2;
+}
+
 #bag-btn {
   right: calc(394px + env(safe-area-inset-right));
 }

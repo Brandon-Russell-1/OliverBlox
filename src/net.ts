@@ -42,7 +42,7 @@ export type NetMessage =
   | { t: 'hello'; id: string }
   | { t: 'bye' }
   // Shared skeletons: the host sends where they all are, guests report hits, and rewards go to everyone.
-  | ({ t: 'en'; c?: number } & EnemySnapshot)
+  | ({ t: 'en'; c?: number; w?: number } & EnemySnapshot)
   | { t: 'dmg'; id: string; n: number; x: number; z: number }
   | { t: 'hit'; to: string; x: number; z: number }
   | { t: 'won'; boss: boolean; fort: string }

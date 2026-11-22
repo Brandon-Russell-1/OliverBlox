@@ -142,3 +142,47 @@ export function speak(text: string, style: VoiceStyle = BOLT_VOICE): void {
     // Speech is a nice-to-have; the game works without it.
   }
 }
+
+function noise(seconds: number): AudioBuffer | null {
+  if (!ctx) return null;
+  const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  return buffer;
+}
+
+let rainGain: GainNode | null = null;
+
+/** The hiss of rain, from silent (0) to a downpour (1). */
+export function setRain(level: number): void {
+  if (!ctx) return;
+  if (!rainGain) {
+    if (level <= 0) return;
+    const source = ctx.createBufferSource();
+    source.buffer = noise(2);
+    source.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = 1500;
+    rainGain = ctx.createGain();
+    rainGain.gain.value = 0;
+    source.connect(filter).connect(rainGain).connect(ctx.destination);
+    source.start();
+  }
+  rainGain.gain.value = level * 0.05;
+}
+
+/** A long low rumble. */
+export function thunder(): void {
+  if (!ctx) return;
+  const source = ctx.createBufferSource();
+  source.buffer = noise(3);
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 170;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.9, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.8);
+  source.connect(filter).connect(gain).connect(ctx.destination);
+  source.start();
+}

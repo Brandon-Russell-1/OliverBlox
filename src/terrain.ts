@@ -171,7 +171,25 @@ export function villagesNear(x: number, z: number): Village[] {
 }
 
 /** Land shape with a level patch pressed into it wherever a village stands. */
+/** A long flat strip to take off from and land on, a short walk from the first village. */
+export const AIRSTRIP = { x: 175, z: -20, halfLength: 60, halfWidth: 9, h: 4.6 };
+
+/** How far a point is from the runway; 0 on it. */
+export function airstripDistance(x: number, z: number): number {
+  const dx = Math.max(0, Math.abs(x - AIRSTRIP.x) - AIRSTRIP.halfLength);
+  const dz = Math.max(0, Math.abs(z - AIRSTRIP.z) - AIRSTRIP.halfWidth);
+  return Math.hypot(dx, dz);
+}
+
 function rawHeight(x: number, z: number): number {
+  const h = placedHeight(x, z);
+  const d = airstripDistance(x, z);
+  if (d > 24) return h;
+  const k = 1 - smoothstep(2, 24, d);
+  return h * (1 - k) + AIRSTRIP.h * k;
+}
+
+function placedHeight(x: number, z: number): number {
   const h = baseHeight(x, z);
   const v = nearestVillage(x, z);
   if (!v) return h;
@@ -417,6 +435,12 @@ export class Terrain {
       const mx = ox + ((ax + bx + dx) / 3) * CELL;
       const mz = oz + ((az + bz + dz) / 3) * CELL;
       colorAt(mx, mz, (ah + bh + dh) / 3, ny / Math.hypot(nx, ny, nz), c);
+      if (airstripDistance(mx, mz) === 0) {
+        // Tarmac, with a broken white line down the middle.
+        const stripe = Math.abs(mz - AIRSTRIP.z) < 2 && Math.floor(mx / 9) % 2 === 0;
+        if (stripe) c.setRGB(0.85, 0.85, 0.85);
+        else c.setRGB(0.13, 0.14, 0.17);
+      }
       if (floorOf && Math.hypot(mx - floorOf.x, mz - floorOf.z) < DUNGEON_HALF + 14) c.setRGB(0.2, 0.2, 0.24).multiplyScalar(0.8 + hash2(Math.floor(mx), Math.floor(mz), 3) * 0.4);
       for (const [vx, vz, vh] of [
         [ax, az, ah],
@@ -454,7 +478,7 @@ export class Terrain {
     const village = nearestVillage(ox + CHUNK / 2, oz + CHUNK / 2);
     // Keep the village green clear of trees and boulders.
     const inVillage = (x: number, z: number): boolean =>
-      village !== null && Math.hypot(x - village.x, z - village.z) < VILLAGE_RADIUS;
+      airstripDistance(x, z) < 8 || (village !== null && Math.hypot(x - village.x, z - village.z) < VILLAGE_RADIUS);
     const put = (def: PropDef, x: number, z: number, y: number, targetHeight: number): number => {
       const scale = targetHeight / def.height;
       placements.push({ def, x, y, z, scale, rot: rng() * Math.PI * 2 });

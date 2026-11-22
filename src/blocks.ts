@@ -19,7 +19,19 @@ export const BLOCK_COLORS: Record<number, number> = {
   [PURPLE]: 0x9c5cf0,
   [WHITE]: 0xf4f6fa,
   [BRICK]: 0xb5523b,
+  // More materials, picked from the builder's kit.
+  9: 0x8a5a2b,
+  10: 0x8d9199,
+  11: 0x5fbf4a,
+  12: 0xf0dc9a,
+  13: 0xff8fc7,
+  14: 0x2b2d33,
+  15: 0x7fd4ff,
+  16: 0xb6f04a,
 };
+
+/** Wood, stone, grass, sand, pink, black, sky and lime. */
+export const EXTRA_BLOCKS = [9, 10, 11, 12, 13, 14, 15, 16];
 
 /** Blocks Oliver can place, in hotbar order. */
 export const HOTBAR = [RED, ORANGE, YELLOW, GREEN, BLUE, PURPLE, WHITE, BRICK];
@@ -66,7 +78,15 @@ export class Blocks {
   }
 
   load(list: [number, number, number, number][]): void {
-    for (const [x, y, z, t] of list) this.map.set(`${x},${y},${z}`, t);
+    this.setMany(list);
+  }
+
+  /** Change many cells with one redraw. Type 0 removes. */
+  setMany(list: [number, number, number, number][]): void {
+    for (const [x, y, z, t] of list) {
+      if (t === 0) this.map.delete(`${x},${y},${z}`);
+      else this.map.set(`${x},${y},${z}`, t);
+    }
     this.rebuild();
   }
 

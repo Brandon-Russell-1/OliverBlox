@@ -41,6 +41,9 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Shared with friends:** stars and treasure chests now vanish for everyone when one player takes them, and everyone gets the prize. Friends' building counts toward building jobs. Friends are shown in their car or boat, with their pet beside them.
 - **Grown-up controls:** in the grown-ups panel, switch music or skeletons off, see minutes played today, and set a daily limit. When the limit is reached a "time for a break" screen covers the game until a grown-up raises it.
 - **Works offline:** after the first visit the game is kept on the device, so it loads quickly and opens without internet (playing alone; chat and playing together need a connection).
+- **Weather:** showers roll in about every seven minutes and last about a minute: rain, a greyer sky, and thunder and lightning in the heavy ones. It never rains indoors or underground.
+- **Airstrip and plane:** the 🛫 on the map is a runway. Picking ✈️ in the garage parks a propeller plane there. Push forward to speed up, press the up button to climb once it is fast enough, and the down button to descend. Flying too slowly loses height. He can only get out on the ground.
+- **Builder's kit:** the 🧰 button opens ready-made shapes (wall, tower, stairs, hut, bridge, pyramid) that build in one tap, facing the way he faces, in whichever colour is selected; eight more materials (wood, stone, grass, sand, pink, black, sky, lime); and an undo button that takes back the last thirty edits.
 - **The guide:** a banner at the top shows one goal at a time: a picture of what to do, a red arrow pointing to it, and how far away it is. Bolt explains each new goal out loud, and it shows as 🎯 on the map. It walks through eleven goals, from the first star to the dungeon treasure, skipping any already done.
 - **Bag:** the 🎒 button shows what he is carrying (fish, bones from skeletons, gems from chests and treasure) and what he owns. Hats can be put on and taken off from here.
 - **Market:** the village shop also buys. The top row lists what is in his bag; a tap sells one for coins.
@@ -69,6 +72,56 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 
 Bolt and the villagers use scripted lines until you connect them to Claude. See [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md).
 
+## Run your own copy
+
+Everything here is free to run. You need a GitHub account; the AI characters and playing together also need a free Cloudflare account and, for the AI only, an Anthropic API key that you pay for by use.
+
+### 1. The game on its own
+
+1. Fork this repository on GitHub.
+2. In your fork, open **Settings > Pages** and set **Source** to **GitHub Actions**.
+3. Push any change to `main` (or run the **Deploy to GitHub Pages** workflow by hand from the **Actions** tab).
+4. The game is then at `https://<your-username>.github.io/<repo-name>/`.
+
+That is a complete game: the characters speak from scripted lines, and each device plays alone. Progress is saved in the browser on that device.
+
+### 2. AI characters and playing together (optional)
+
+Both run through one small Cloudflare Worker in the `worker` folder. It keeps your API key off the public site, and only answers requests that come from your game's address and carry a passphrase you choose (the "family code").
+
+1. Edit `worker/wrangler.toml` and change `ALLOWED_ORIGINS` to your own site's origin, for example `https://<your-username>.github.io`. This is the step people miss: without it the Worker refuses your game with error 403.
+2. Follow [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md): log in, deploy, and set the two secrets.
+
+   ```
+   cd worker
+   npm install
+   npx wrangler login
+   npx wrangler deploy
+   npx wrangler secret put ANTHROPIC_API_KEY
+   npx wrangler secret put FAMILY_CODE
+   ```
+
+   Type each `secret put` line exactly as shown and paste the value only when it asks. `ANTHROPIC_API_KEY` and `FAMILY_CODE` are the real names, not placeholders.
+3. In the game, hold the gear button for two seconds and enter the Worker's address and your family code. Do this once on each device.
+
+Playing together needs no API key: skip the `ANTHROPIC_API_KEY` secret and it still works, with the characters on their scripted lines.
+
+### Costs and safety
+
+- GitHub Pages and the Cloudflare Worker, including the rooms for playing together, are on free plans.
+- The AI uses Claude Haiku 5.5 with very short replies. Set a monthly spending limit in the Anthropic console before giving the game to a child.
+- The characters' rules live in `worker/src/index.ts`, on the server, so nothing typed into the game can change them. Read and adjust them to suit your child: the wording assumes a player of about six.
+- Players can only send each other emoji from a fixed list, and only people with your Worker address and family code can join a room.
+- The grown-ups panel (hold the gear) has the chat transcript, a daily time limit, and switches for music and fighting.
+
+### Making it yours
+
+- **Name and icon:** the title is in `index.html` and `public/manifest.webmanifest`; the icon is `public/icon.svg`.
+- **Characters' personalities:** `CHARACTERS` in `worker/src/index.ts`, with their offline lines in `src/chat.ts`.
+- **Jobs the villagers give:** `src/quests.ts`.
+- **The guided goals:** `STEPS` in `src/main.ts`.
+- **The world's shape:** `baseHeight` in `src/terrain.ts`.
+
 ## Develop
 
 ```
@@ -91,7 +144,8 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 8. Caves and dungeons, hats and held weapons shown to friends, shared time of day, smaller download (done)
 9. Guide, bag, market selling, map zoom (done)
 10. A labelled house he arranges himself, giving to friends (done)
-11. More mini-games, decorated dungeon walls, skeletons that respect walls
+11. Walk-in doors and caves, weather, airstrip and plane, builder's kit (done)
+12. More mini-games, decorated dungeon walls, skeletons that respect walls
 
 ## Credits
 
