@@ -72,12 +72,42 @@ button {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top));
   right: calc(12px + env(safe-area-inset-right));
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: rgba(20, 30, 80, 0.3);
-  font-size: 18px;
-  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.8);
+  border: 3px solid rgba(20, 30, 80, 0.4);
+  font-size: 20px;
+  padding: 0;
+}
+
+/* The ring fills while the button is held, so it is clear something is happening. */
+#gear.holding {
+  border-color: #3ddc5b;
+  box-shadow: 0 0 0 0 #3ddc5b;
+  animation: gear-hold 1.5s linear forwards;
+}
+
+@keyframes gear-hold {
+  to {
+    box-shadow: 0 0 0 10px #3ddc5b;
+  }
+}
+
+#gear-hint {
+  position: fixed;
+  top: calc(66px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(20, 30, 80, 0.85);
+  color: #fff;
+  font-size: 15px;
+  pointer-events: none;
+}
+
+#gear-hint[hidden] {
+  display: none;
 }
 
 #bubble {

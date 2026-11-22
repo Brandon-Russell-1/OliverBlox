@@ -357,13 +357,37 @@ const openParentPanel = setupParentPanel(() => {
   location.reload();
 });
 const gear = $('gear');
+const gearHint = $('gear-hint');
 let gearTimer = 0;
-gear.addEventListener('pointerdown', () => {
-  gearTimer = window.setTimeout(openParentPanel, 1500);
+let hintTimer = 0;
+gear.addEventListener('contextmenu', (e) => e.preventDefault());
+gear.addEventListener('pointerdown', (e) => {
+  try {
+    gear.setPointerCapture(e.pointerId);
+  } catch {
+    // Capture is a nicety; the hold still works without it.
+  }
+  gear.classList.add('holding');
+  gearTimer = window.setTimeout(() => {
+    gear.classList.remove('holding');
+    gearHint.hidden = true;
+    openParentPanel();
+  }, 1500);
 });
-for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) {
-  gear.addEventListener(ev, () => window.clearTimeout(gearTimer));
-}
+const gearRelease = (): void => {
+  // Let go too early: explain the hold instead of doing nothing.
+  if (gear.classList.contains('holding')) {
+    gearHint.hidden = false;
+    window.clearTimeout(hintTimer);
+    hintTimer = window.setTimeout(() => {
+      gearHint.hidden = true;
+    }, 3000);
+  }
+  gear.classList.remove('holding');
+  window.clearTimeout(gearTimer);
+};
+gear.addEventListener('pointerup', gearRelease);
+gear.addEventListener('pointercancel', gearRelease);
 
 // ---------- the game proper, built once the models have loaded ----------
 
