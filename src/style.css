@@ -235,6 +235,75 @@ body:not(.touch) #fly {
   display: none;
 }
 
+#stars .coin-icon {
+  margin-left: 10px;
+}
+
+#quests {
+  position: fixed;
+  top: calc(100px + env(safe-area-inset-top));
+  left: calc(12px + env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.quest {
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: rgba(20, 30, 80, 0.55);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.quest.done {
+  background: #2fb84c;
+}
+
+#shop {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  grid-template-columns: repeat(2, 130px);
+  gap: 12px;
+  padding: 16px;
+  border-radius: 22px;
+  background: rgba(20, 30, 80, 0.8);
+}
+
+#shop[hidden] {
+  display: none;
+}
+
+#shop button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 0;
+  border-radius: 16px;
+  background: #fff;
+  font-size: 46px;
+}
+
+#shop button span {
+  font-size: 22px;
+  font-weight: 800;
+  color: #1c2a6b;
+}
+
+#shop button.poor {
+  opacity: 0.5;
+}
+
+#shop button.owned {
+  background: #c9f5d2;
+}
+
 #hearts {
   position: fixed;
   top: calc(64px + env(safe-area-inset-top));

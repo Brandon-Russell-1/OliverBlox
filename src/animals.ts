@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import type { AnimatedModel } from './assets';
-import { groundAt } from './terrain';
+import { groundAt, SEA_LEVEL } from './terrain';
 
-interface Animal {
+export interface Animal {
   root: THREE.Object3D;
   mixer: THREE.AnimationMixer;
   idle: THREE.AnimationAction | null;
   walk: THREE.AnimationAction | null;
+  /** Index into the animal models, so a befriended animal can be recreated as a pet. */
+  species: number;
   heading: number;
   walking: boolean;
   timer: number;
@@ -14,6 +16,12 @@ interface Animal {
 
 const MAX_ANIMALS = 8;
 const SPEED = 1.6;
+
+function turnToward(root: THREE.Object3D, heading: number, rate: number): void {
+  let diff = heading - root.rotation.y;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  root.rotation.y += diff * Math.min(1, rate);
+}
 
 /** Friendly animals that wander near the player and fade away when left far behind. */
 export class Animals {
@@ -34,7 +42,8 @@ export class Animals {
     // Land animals only: not in the sea and not up in the snow.
     if (y < 1 || y > 40) return;
 
-    const model = this.models[Math.floor(Math.random() * this.models.length)];
+    const species = Math.floor(Math.random() * this.models.length);
+    const model = this.models[species];
     const root = model.scene.clone(true);
     root.position.set(x, y, z);
     const mixer = new THREE.AnimationMixer(root);
@@ -47,6 +56,7 @@ export class Animals {
       mixer,
       idle: action('idle'),
       walk: action('walk'),
+      species,
       heading: Math.random() * Math.PI * 2,
       walking: false,
       timer: 1 + Math.random() * 3,
@@ -64,6 +74,28 @@ export class Animals {
     const to = walking ? a.walk : a.idle;
     from?.fadeOut(0.25);
     to?.reset().fadeIn(0.25).play();
+  }
+
+  /** The closest wild animal within reach, if any. */
+  nearest(pos: THREE.Vector3, range: number): Animal | null {
+    let best: Animal | null = null;
+    let bestDist = range;
+    for (const a of this.list) {
+      const d = Math.hypot(a.root.position.x - pos.x, a.root.position.z - pos.z);
+      if (d < bestDist) {
+        best = a;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  /** Take an animal out of the wild so it can become a pet. Returns its species. */
+  adopt(a: Animal): number {
+    const i = this.list.indexOf(a);
+    if (i >= 0) this.list.splice(i, 1);
+    this.scene.remove(a.root);
+    return a.species;
   }
 
   update(dt: number, player: THREE.Vector3): void {
@@ -102,11 +134,71 @@ export class Animals {
         else p.set(nx, p.y, nz);
       }
       p.y = groundAt(p.x, p.z);
-
-      let diff = a.heading - a.root.rotation.y;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      a.root.rotation.y += diff * Math.min(1, 6 * dt);
+      turnToward(a.root, a.heading, 6 * dt);
       a.mixer.update(dt);
     }
+  }
+}
+
+/** A befriended animal that trots after the hero wherever he goes. */
+export class Pet {
+  private readonly root: THREE.Object3D;
+  private readonly mixer: THREE.AnimationMixer;
+  private readonly actions = new Map<string, THREE.AnimationAction>();
+  private current = '';
+
+  constructor(
+    private readonly scene: THREE.Scene,
+    model: AnimatedModel,
+    at: THREE.Vector3,
+  ) {
+    this.root = model.scene.clone(true);
+    this.root.position.copy(at);
+    this.mixer = new THREE.AnimationMixer(this.root);
+    for (const name of ['idle', 'walk', 'run']) {
+      const clip = model.clips.find((c) => c.name === name);
+      if (clip) this.actions.set(name, this.mixer.clipAction(clip));
+    }
+    this.play('idle');
+    scene.add(this.root);
+  }
+
+  private play(name: string): void {
+    const next = this.actions.get(name) ?? this.actions.get('walk');
+    if (!next || name === this.current) return;
+    this.actions.get(this.current)?.fadeOut(0.2);
+    next.reset().fadeIn(0.2).play();
+    this.current = name;
+  }
+
+  update(dt: number, target: THREE.Vector3): void {
+    const p = this.root.position;
+    let dx = target.x - p.x;
+    let dz = target.z - p.z;
+    let dist = Math.hypot(dx, dz);
+    // Left far behind (a fast car, a long flight): catch up in one hop.
+    if (dist > 60) {
+      p.set(target.x - (dx / dist) * 5, 0, target.z - (dz / dist) * 5);
+      dx = target.x - p.x;
+      dz = target.z - p.z;
+      dist = 5;
+    }
+
+    if (dist > 3.5) {
+      const speed = Math.min(20, (dist - 2.5) * 2.2);
+      p.x += (dx / dist) * speed * dt;
+      p.z += (dz / dist) * speed * dt;
+      turnToward(this.root, Math.atan2(dx, dz), 10 * dt);
+      this.play(speed > 4.5 ? 'run' : 'walk');
+    } else {
+      this.play('idle');
+    }
+    // Paddle at the surface instead of walking along the seabed.
+    p.y = Math.max(groundAt(p.x, p.z), SEA_LEVEL - 0.5);
+    this.mixer.update(dt);
+  }
+
+  dispose(): void {
+    this.scene.remove(this.root);
   }
 }

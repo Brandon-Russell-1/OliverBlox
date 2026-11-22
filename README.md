@@ -19,8 +19,11 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 | Fight | Pick the sword or wand, then tap the screen or the swords button | Click, or Q |
 | Build | Pick a colour and tap the world; the pickaxe removes | Click; right-click removes; 1-9 pick a tool |
 | Vehicles | Car button (top right) gives any car or boat | Same; E gets in and out |
-| Talk | Robot button for Bolt; speech button near a villager | Same; E near a villager |
+| Talk, shop, befriend | Robot button for Bolt; the yellow button near a villager, shopkeeper or animal | Same; E for the yellow button |
 
+- **Quests:** villagers with a ❗ over their head have a job (find stars, bonk skeletons, build with blocks, befriend an animal). Chips on the left show progress; go back when they show 🎁 to collect coins.
+- **Shop:** the villager with the 🛒 sells an axe, a great sword, extra hearts and running shoes for coins. Skeletons drop a coin each too.
+- **Pets:** walk up to any animal and tap the paw button; it follows him from then on.
 - Stars are marked by beams of light, and each skeleton beaten gives one more. Bolt counts them out loud.
 - Skeletons only appear out in the wilds, never near the start or a village. They are slower than a walk. Running out of hearts just pops the hero back to a quiet spot.
 - Everything saves itself in the browser.
@@ -44,8 +47,9 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 
 1. Open world: endless terrain, heroes, vehicles, animals, building, stars (done)
 2. Villages, weapons and skeletons, garage, talking characters (done)
-3. Quests, things to pick up, block coding
-4. Invite-code multiplayer
+3. Quests, shop and pets (done)
+4. Enterable houses, more shop items, block coding
+5. Invite-code multiplayer
 
 ## Credits
 

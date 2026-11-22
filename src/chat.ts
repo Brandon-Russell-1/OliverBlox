@@ -166,11 +166,11 @@ export class Chat {
     return this.persona !== null;
   }
 
-  open(persona: Persona): void {
+  open(persona: Persona, hello?: string): void {
     this.persona = persona;
     this.panel.hidden = false;
     this.who.textContent = `${persona.emoji} ${persona.name}`;
-    this.say(persona.hello);
+    this.say(hello ?? persona.hello);
   }
 
   close(): void {

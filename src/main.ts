@@ -5,7 +5,8 @@ import { Terrain, groundAt, nearestVillage, SEA_LEVEL, VILLAGE_RADIUS, type Vill
 import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
-import { Animals } from './animals';
+import { Animals, Pet, type Animal } from './animals';
+import { Quests, QUEST_ICONS, type QuestSave } from './quests';
 import { Actor } from './actor';
 import { Enemies, type EnemyContext } from './combat';
 import { Chat, PERSONAS, setupParentPanel } from './chat';
@@ -29,7 +30,6 @@ const SWIM_DEPTH = 1.3;
 const SWIM_Y = SEA_LEVEL - 1.5;
 const STAND_H = 2.1;
 const CRAWL_H = 1;
-const MAX_HEARTS = 5;
 const HORIZON = 0xb5dcff;
 
 /** Hotbar slots before the building blocks. */
@@ -76,7 +76,30 @@ const VILLAGERS = [
   { persona: 'mage', model: 'Mage', dx: 7, dz: 5 },
   { persona: 'barbarian', model: 'Barbarian', dx: -8, dz: 4 },
   { persona: 'druid', model: 'Druid', dx: 2, dz: -9 },
+  { persona: 'shop', model: 'Engineer', dx: -3, dz: 9 },
 ];
+
+/** What floats over a villager's head: a job to give, one under way, or a reward waiting. */
+const MARKS = { none: '', new: '❗', doing: '⏳', done: '🎁' };
+const emojiTextures = new Map<string, THREE.Texture>();
+function emojiTexture(emoji: string): THREE.Texture {
+  let texture = emojiTextures.get(emoji);
+  if (!texture) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const g = c.getContext('2d');
+    if (g) {
+      g.font = '72px sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(emoji, 48, 54);
+    }
+    texture = new THREE.CanvasTexture(c);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    emojiTextures.set(emoji, texture);
+  }
+  return texture;
+}
 
 interface Save {
   v: 2;
@@ -87,6 +110,14 @@ interface Save {
   vehicle?: string;
   /** Stars earned by beating skeletons. */
   bonus?: number;
+  coins?: number;
+  /** 0 sword, 1 axe, 2 great sword. */
+  sword?: number;
+  extraHearts?: number;
+  boots?: boolean;
+  /** Species of the pet, or -1 for none. */
+  pet?: number;
+  quests?: QuestSave;
 }
 
 function loadSave(): Save | null {
@@ -174,6 +205,13 @@ scene.add(water, clouds);
 const save = loadSave();
 const collected = new Set<string>(save?.stars ?? []);
 let bonusStars = save?.bonus ?? 0;
+let coins = save?.coins ?? 0;
+let swordLevel = save?.sword ?? 0;
+let extraHearts = save?.extraHearts ?? 0;
+let boots = save?.boots ?? false;
+let petSpecies = save?.pet ?? -1;
+let maxHearts = 5 + extraHearts;
+const quests = new Quests(save?.quests);
 const blocks = new Blocks(scene);
 if (save) blocks.load(save.blocks);
 
@@ -205,7 +243,7 @@ let swimming = false;
 let facing = 0;
 let airTime = 0;
 let now = 0;
-let hearts = MAX_HEARTS;
+let hearts = maxHearts;
 
 let camYaw = Math.PI;
 let camPitch = 0.38;
@@ -234,10 +272,28 @@ function showStars(pop: boolean): void {
   starsEl.classList.add('pop');
 }
 function showHearts(): void {
-  heartsEl.textContent = '❤️'.repeat(hearts) + '🤍'.repeat(MAX_HEARTS - hearts);
+  heartsEl.textContent = '❤️'.repeat(hearts) + '🤍'.repeat(maxHearts - hearts);
+}
+const coinCountEl = $('coin-count');
+const questsEl = $('quests');
+function showCoins(): void {
+  coinCountEl.textContent = String(coins);
+}
+/** One chip per job in progress: a picture of what to do and how far along he is. */
+function showQuests(): void {
+  questsEl.replaceChildren(
+    ...quests.list().map((q) => {
+      const chip = document.createElement('div');
+      chip.className = q.have >= q.need ? 'quest done' : 'quest';
+      chip.textContent = `${QUEST_ICONS[q.type]} ${q.have}/${q.need}`;
+      return chip;
+    }),
+  );
 }
 showStars(false);
 showHearts();
+showCoins();
+showQuests();
 
 let tool = SWORD;
 let onToolChange: () => void = () => {};
@@ -333,6 +389,12 @@ function saveNow(): void {
     car: [carPos.x, carPos.z, carHeading],
     vehicle: vehicleName,
     bonus: bonusStars,
+    coins,
+    sword: swordLevel,
+    extraHearts,
+    boots,
+    pet: petSpecies,
+    quests: quests.save(),
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
@@ -415,10 +477,18 @@ async function createGame(assets: Assets): Promise<Game> {
   let heroIndex = Math.max(0, CHARACTERS.indexOf(localStorage.getItem(HERO_KEY) ?? 'Rogue'));
   let heroToken = 0;
 
+  const SWORDS = ['sword_1handed', 'axe_1handed', 'sword_2handed'];
+  const swordModels: THREE.Object3D[] = [assets.sword];
   function equip(): void {
-    const item = tool === SWORD ? assets.sword : tool === STAFF ? assets.staff : null;
+    const item = tool === SWORD ? (swordModels[swordLevel] ?? assets.sword) : tool === STAFF ? assets.staff : null;
     hero?.hold(item ? item.clone() : null);
   }
+  /** Better blades from the shop are downloaded the first time they are needed. */
+  async function loadSword(level: number): Promise<void> {
+    if (!swordModels[level]) swordModels[level] = (await loadModel(`weapon/${SWORDS[level]}.gltf`)).scene;
+    equip();
+  }
+  if (swordLevel > 0) void loadSword(swordLevel);
   onToolChange = equip;
 
   async function setHero(index: number): Promise<void> {
@@ -490,6 +560,7 @@ async function createGame(assets: Assets): Promise<Game> {
   interface Villager {
     actor: Actor;
     persona: string;
+    marker: THREE.Sprite;
   }
   let villagers: Villager[] = [];
   let villageShown: Village | null = null;
@@ -510,8 +581,12 @@ async function createGame(assets: Assets): Promise<Game> {
       const z = v.z + def.dz;
       actor.root.position.set(x, groundAt(x, z), z);
       actor.play('Idle_A');
+      const marker = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false }));
+      marker.position.y = 3.5;
+      marker.scale.setScalar(1.4);
+      actor.root.add(marker);
       scene.add(actor.root);
-      villagers.push({ actor, persona: def.persona });
+      villagers.push({ actor, persona: def.persona, marker });
     });
   }
 
@@ -522,6 +597,9 @@ async function createGame(assets: Assets): Promise<Game> {
     nearVillager = null;
     let best = 5;
     for (const person of villagers) {
+      const mark = person.persona === 'shop' ? '🛒' : MARKS[quests.state(person.persona)];
+      person.marker.visible = mark !== '';
+      if (mark) person.marker.material.map = emojiTexture(mark);
       const p = person.actor.root.position;
       const d = Math.hypot(p.x - who.x, p.z - who.z);
       if (d < 9) {
@@ -567,10 +645,84 @@ async function createGame(assets: Assets): Promise<Game> {
     sfx.door();
   }
 
+  // ---- quests: walking up to a villager gives a job, a reminder, or the reward ----
+  function talkTo(persona: string): void {
+    if (persona === 'shop') {
+      openShop();
+      return;
+    }
+    const result = quests.talk(persona);
+    if (result.reward > 0) {
+      coins += result.reward;
+      showCoins();
+      sfx.win();
+      cheerUntil = now + 2.5;
+    }
+    showQuests();
+    dirty = true;
+    chat.open(PERSONAS[persona], result.text);
+  }
+
+  // ---- shop: spend coins on better gear ----
+  const shopEl = $('shop');
+  const SHOP = [
+    { icon: '🪓', price: 10, owned: () => swordLevel >= 1, buy: () => { swordLevel = 1; void loadSword(1); } },
+    { icon: '⚔️', price: 30, owned: () => swordLevel >= 2, buy: () => { swordLevel = 2; void loadSword(2); } },
+    { icon: '❤️', price: 15, owned: () => extraHearts >= 3, buy: () => { extraHearts++; maxHearts++; hearts = maxHearts; showHearts(); } },
+    { icon: '👟', price: 20, owned: () => boots, buy: () => { boots = true; } },
+  ];
+  function renderShop(): void {
+    shopEl.replaceChildren(
+      ...SHOP.map((item) => {
+        const b = document.createElement('button');
+        const owned = item.owned();
+        b.className = owned ? 'owned' : coins < item.price ? 'poor' : '';
+        const price = document.createElement('span');
+        price.textContent = owned ? '✅' : `🪙 ${item.price}`;
+        b.append(item.icon, price);
+        b.addEventListener('click', () => {
+          if (item.owned() || coins < item.price) {
+            sfx.remove();
+            return;
+          }
+          coins -= item.price;
+          item.buy();
+          showCoins();
+          sfx.win();
+          dirty = true;
+          renderShop();
+        });
+        return b;
+      }),
+    );
+  }
+  function openShop(): void {
+    renderShop();
+    shopEl.hidden = false;
+    speak('Welcome to my shop! Coins buy better gear.', { pitch: 1.15, rate: 0.95 });
+  }
+
+  // ---- pet: a befriended animal that follows along ----
+  let pet: Pet | null = petSpecies >= 0 && assets.pets[petSpecies] ? new Pet(scene, assets.pets[petSpecies], player.pos) : null;
+  let nearAnimal: Animal | null = null;
+  function befriend(animal: Animal): void {
+    petSpecies = animals.adopt(animal);
+    // The old pet goes back to the wild.
+    pet?.dispose();
+    pet = new Pet(scene, assets.pets[petSpecies], animal.root.position);
+    quests.add('pet', 1);
+    showQuests();
+    sfx.star();
+    speak('You made a new friend!');
+    cheerUntil = now + 2;
+    dirty = true;
+  }
+
   input.onAction = () => {
     if (!started) return;
     if (driving) exitVehicle();
-    else if (nearVillager) chat.open(PERSONAS[nearVillager.persona]);
+    else if (nearVillager) talkTo(nearVillager.persona);
+    else if (nearAnimal) befriend(nearAnimal);
     else if (nearVehicle()) enterVehicle();
     dirty = true;
   };
@@ -659,7 +811,7 @@ async function createGame(assets: Assets): Promise<Game> {
       if (hero) busyUntil = now + hero.once('Hit_A', 1.5) * 0.7;
       if (hearts <= 0) {
         // Out of hearts: pop back to the last quiet spot, good as new.
-        hearts = MAX_HEARTS;
+        hearts = maxHearts;
         player.pos.copy(safeSpot);
         player.vel.set(0, 0, 0);
         knock.set(0, 0, 0);
@@ -669,6 +821,9 @@ async function createGame(assets: Assets): Promise<Game> {
       showHearts();
     },
     onDefeat() {
+      coins++;
+      showCoins();
+      if (quests.add('skeletons', 1)) showQuests();
       bonusStars++;
       showStars(true);
       sfx.star();
@@ -703,7 +858,7 @@ async function createGame(assets: Assets): Promise<Game> {
       const fz = Math.cos(facing);
       if (pendingHit.kind === 'sword') {
         const point = new THREE.Vector3(player.pos.x + fx * 1.8, player.pos.y, player.pos.z + fz * 1.8);
-        if (enemies.damageAt(point, 2.7, 1, enemyContext) > 0) sfx.bonk();
+        if (enemies.damageAt(point, 2.7, 1 + swordLevel, enemyContext) > 0) sfx.bonk();
       } else {
         const mesh = new THREE.Mesh(boltGeometry, boltMaterial);
         mesh.position.set(player.pos.x + fx, player.pos.y + 1.6, player.pos.z + fz);
@@ -730,7 +885,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
 
     // Hearts grow back after a quiet moment.
-    if (hearts < MAX_HEARTS && now - lastHurt > 6) {
+    if (hearts < maxHearts && now - lastHurt > 6) {
       hearts++;
       lastHurt = now - 3;
       showHearts();
@@ -751,6 +906,7 @@ async function createGame(assets: Assets): Promise<Game> {
   input.onTap = (px, py, button) => {
     if (!started || driving) return;
     garageEl.hidden = true;
+    shopEl.hidden = true;
     if ((tool === SWORD || tool === STAFF) && button !== 2) {
       attack();
       return;
@@ -775,6 +931,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     if (bodyTouchesCell(player, hit.px, hit.py, hit.pz)) return;
     if (blocks.set(hit.px, hit.py, hit.pz, HOTBAR[tool - FIRST_BLOCK])) {
+      if (quests.add('blocks', 1)) showQuests();
       sfx.place();
       dirty = true;
     }
@@ -814,7 +971,7 @@ async function createGame(assets: Assets): Promise<Game> {
         pos.y += (SWIM_Y - pos.y) * Math.min(1, 6 * dt);
         moveBody(player, dt, blocks, false);
       } else {
-        let speed = crawling ? CRAWL_SPEED : input.run ? RUN_SPEED : WALK_SPEED;
+        let speed = crawling ? CRAWL_SPEED : input.run ? RUN_SPEED * (boots ? 1.35 : 1) : WALK_SPEED;
         if (ground < SEA_LEVEL - 0.4) speed *= 0.6;
         vel.x = mx * speed + knock.x;
         vel.z = mz * speed + knock.z;
@@ -996,7 +1153,18 @@ async function createGame(assets: Assets): Promise<Game> {
           hero: CHARACTERS[heroIndex],
           villagers: villagers.length,
           bolts: bolts.length,
+          coins,
+          quests: quests.list(),
+          pet: petSpecies,
+          swordLevel,
+          maxHearts,
         }),
+        quests,
+        animals,
+        give: (n: number) => {
+          coins += n;
+          showCoins();
+        },
       },
     });
   }
@@ -1015,7 +1183,9 @@ async function createGame(assets: Assets): Promise<Game> {
         updateCombat(dt);
 
         const who = driving ? carPos : player.pos;
-        if (terrain.collect(who, driving ? 3.5 : 2.2) > 0) {
+        const found = terrain.collect(who, driving ? 3.5 : 2.2);
+        if (found > 0) {
+          if (quests.add('stars', found)) showQuests();
           showStars(true);
           sfx.star();
           // Counting out loud as the stars add up.
@@ -1025,7 +1195,11 @@ async function createGame(assets: Assets): Promise<Game> {
           dirty = true;
         }
 
-        const icon = driving ? '🚶' : nearVillager ? '💬' : nearVehicle() ? (vehicleKind === 'boat' ? '⛵' : '🚗') : '';
+        nearAnimal = animals.nearest(player.pos, 4.5);
+        // The shop shuts when he walks away from the shopkeeper.
+        if (!shopEl.hidden && nearVillager?.persona !== 'shop') shopEl.hidden = true;
+        const talk = nearVillager?.persona === 'shop' ? '🛒' : '💬';
+        const icon = driving ? '🚶' : nearVillager ? talk : nearAnimal ? '🐾' : nearVehicle() ? (vehicleKind === 'boat' ? '⛵' : '🚗') : '';
         if (icon !== actionShown) {
           actionShown = icon;
           actionEl.hidden = icon === '';
@@ -1044,6 +1218,7 @@ async function createGame(assets: Assets): Promise<Game> {
       const who = driving ? carPos : player.pos;
       terrain.update(who.x, who.z, 2);
       animals.update(dt, who);
+      pet?.update(dt, who);
       updateVillagers(dt, who);
       for (const s of terrain.stars) {
         const mesh = s.group.children[0];
