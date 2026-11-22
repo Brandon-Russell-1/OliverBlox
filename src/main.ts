@@ -697,6 +697,34 @@ async function createGame(assets: Assets): Promise<Game> {
   $('prev').addEventListener('click', () => void setHero(heroIndex - 1));
   $('next').addEventListener('click', () => void setHero(heroIndex + 1));
 
+  // ---- going from one place to another: a quick fade instead of a jump ----
+  const fadeEl = $('fade');
+  let travelling = false;
+  /** Walking into a doorway only works once until he has stepped clear of every doorway again. */
+  let zonesArmed = true;
+  let inAnyZone = false;
+  function travel(move: () => void): void {
+    if (travelling) return;
+    travelling = true;
+    zonesArmed = false;
+    player.vel.set(0, 0, 0);
+    fadeEl.classList.add('on');
+    sfx.door();
+    window.setTimeout(() => {
+      move();
+      window.setTimeout(() => {
+        fadeEl.classList.remove('on');
+        travelling = false;
+      }, 180);
+    }, 380);
+  }
+  /** A doorway on the ground: stepping into it sets off `enter`. */
+  function atZone(x: number, z: number, radius: number, enter: () => void): void {
+    const d = Math.hypot(x - player.pos.x, z - player.pos.z);
+    if (d < radius + 0.8) inAnyZone = true;
+    if (d < radius && zonesArmed && !travelling && !driving && !riding) travel(enter);
+  }
+
   // ---- house interiors ----
   const home = new Home(scene);
   const mapEl = $('map');
@@ -704,8 +732,56 @@ async function createGame(assets: Assets): Promise<Game> {
   const nearDoor = (): boolean => {
     // His house is the first one in each village; the others are neighbours' and stay shut.
     const b = villageShown?.buildings[1];
-    return !!b && Math.hypot(b.x - player.pos.x, b.z - player.pos.z) < b.scale * 0.5 + 3.4;
+    // Doors open by walking into them now, so there is no button.
+    void b;
+    return false;
   };
+  /** A point in front of his house's door, `ahead` metres out from the wall. */
+  const doorSpot = (ahead: number): THREE.Vector3 | null => {
+    const b = villageShown?.buildings[1];
+    if (!b) return null;
+    const d = b.scale * 0.4 + ahead;
+    const x = b.x + Math.sin(b.rot) * d;
+    const z = b.z + Math.cos(b.rot) * d;
+    return new THREE.Vector3(x, groundAt(x, z), z);
+  };
+  // His front door: it swings open as he comes near.
+  const frontDoor = new THREE.Group();
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(2, 3.4, 0.16), new THREE.MeshLambertMaterial({ color: 0x7a4f2a }));
+  leaf.position.set(1, 1.7, 0);
+  leaf.castShadow = true;
+  const hinge = new THREE.Group();
+  hinge.position.x = -1;
+  hinge.add(leaf);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(2.5, 3.8, 0.1), new THREE.MeshLambertMaterial({ color: 0x1c1a17 }));
+  frame.position.set(0, 1.8, -0.12);
+  frontDoor.add(hinge, frame);
+  frontDoor.visible = false;
+  scene.add(frontDoor);
+  let doorOpen = 0;
+  function updateDoors(dt: number): void {
+    inAnyZone = false;
+    const at = doorSpot(0.25);
+    frontDoor.visible = at !== null && inside === null;
+    let near = false;
+    if (inside) {
+      // Indoors: the way out is the door in the far wall.
+      const dz = ROOM.z + ROOM.halfZ - player.pos.z;
+      near = dz < 4.5 && Math.abs(player.pos.x - ROOM.x) < 3;
+      atZone(ROOM.x, ROOM.z + ROOM.halfZ - 0.4, 1.5, goOutside);
+    } else if (at) {
+      const b = villageShown?.buildings[1];
+      frontDoor.position.copy(at);
+      frontDoor.rotation.y = b ? b.rot : 0;
+      near = at.distanceTo(player.pos) < 6.5 && !driving;
+      // Walking into the doorway takes him in.
+      const step = doorSpot(1);
+      if (step) atZone(step.x, step.z, 1.5, goInside);
+    }
+    doorOpen += ((near ? 1 : 0) - doorOpen) * Math.min(1, 6 * dt);
+    hinge.rotation.y = -doorOpen * 1.7;
+    home.swing(doorOpen);
+  }
   const homeTools = $('home-tools');
   $('wall-btn').addEventListener('click', () => {
     wallColour++;
@@ -722,8 +798,10 @@ async function createGame(assets: Assets): Promise<Game> {
   function goInside(): void {
     setFlying(false);
     setCrawling(false);
-    inside = player.pos.clone();
-    player.pos.set(ROOM.x, ROOM.y, ROOM.z + ROOM.halfZ - 2.2);
+    // Coming back out, he will be standing a few steps in front of the door.
+    inside = doorSpot(6) ?? player.pos.clone();
+    // A few steps into the room, clear of the doorway, so turning round and walking back works.
+    player.pos.set(ROOM.x, ROOM.y, ROOM.z + ROOM.halfZ - 5.2);
     player.vel.set(0, 0, 0);
     facing = Math.PI;
     camYaw = 0;
@@ -731,7 +809,7 @@ async function createGame(assets: Assets): Promise<Game> {
     home.setColours(wallColour, floorColour);
     home.show(true, furniture, layout);
     homeTools.hidden = false;
-    if (!homeSeen) speak('Welcome home! Tap a thing to pick it up, then tap where you want it. Tap it twice to turn it.');
+    if (!homeSeen) speak('Welcome home! Tap a thing to pick it up, then tap where you want it. Tap it twice to turn it. Walk to the door to go out.');
     homeSeen = true;
     mapEl.hidden = true;
     attackEl.hidden = true;
@@ -740,6 +818,10 @@ async function createGame(assets: Assets): Promise<Game> {
   function goOutside(): void {
     if (!inside) return;
     player.pos.copy(inside);
+    player.pos.y = groundAt(player.pos.x, player.pos.z);
+    // Facing away from the house, as if he had just walked out.
+    const out = villageShown?.buildings[1];
+    if (out) facing = out.rot;
     camTarget.copy(player.pos);
     inside = null;
     // Remember where everything was left.
@@ -1244,11 +1326,10 @@ async function createGame(assets: Assets): Promise<Game> {
   input.onAction = () => {
     if (!started) return;
     const lift = peers.driverNear(player.pos, 6);
-    if (inside) goOutside();
-    else if (riding) hopOut();
+    if (riding) hopOut();
     else if (fishing) reel();
     else if (driving) exitVehicle();
-    else if (holeNear) useHole();
+    else if (holeNear) useHole(holeNear);
     else if (nearVillager) talkTo(nearVillager.persona);
     else if (nearFlag()) startRace();
     else if (nearAnimal) befriend(nearAnimal);
@@ -1587,6 +1668,11 @@ async function createGame(assets: Assets): Promise<Game> {
 
   function updatePlayer(dt: number): void {
     const { pos, vel } = player;
+    // Held still for the moment the screen is dark between two places.
+    if (travelling) {
+      hero?.update(dt);
+      return;
+    }
     const sin = Math.sin(camYaw);
     const cos = Math.cos(camYaw);
     // Camera-relative movement: forward is away from the camera.
@@ -1611,6 +1697,8 @@ async function createGame(assets: Assets): Promise<Game> {
       vel.set(mx * speed, ((input.jump ? 1 : 0) - (input.down ? 1 : 0)) * 11, mz * speed);
       pos.addScaledVector(vel, dt);
       pos.y = Math.max(pos.y, groundAt(pos.x, pos.z) + 0.1, SWIM_Y);
+      // Solid things stay solid in the air; only flying above them gets past.
+      terrain.collide(pos, player.hw);
       player.onGround = false;
       swimming = false;
     } else {
@@ -1979,16 +2067,16 @@ async function createGame(assets: Assets): Promise<Game> {
   let holeNear: Village | null = null;
   /** Where a dungeon's ladder is: just inside its +z edge. */
   const ladderSpot = (d: Village): THREE.Vector3 =>
-    new THREE.Vector3(d.x, groundAt(d.x, d.z + DUNGEON_HALF - 4), d.z + DUNGEON_HALF - 4);
-  function useHole(): void {
-    const from = holeNear;
+    new THREE.Vector3(d.x, groundAt(d.x, d.z + DUNGEON_HALF - 1.7), d.z + DUNGEON_HALF - 1.7);
+  function useHole(from: Village | null): void {
     const to = from ? linkedPlace(from) : null;
     // A cave so far out that its dungeon would not exist is just a hole in the ground.
     if (!from || !to || (from.kind === 'cave' && to.kind !== 'dungeon')) return;
     setFlying(false);
     setCrawling(false);
     if (to.kind === 'dungeon') {
-      player.pos.copy(ladderSpot(to));
+      // He lands a few steps in from the ladder, which stands against the wall behind him.
+      player.pos.set(to.x, groundAt(to.x, to.z + DUNGEON_HALF - 4.6), to.z + DUNGEON_HALF - 4.6);
       // Arrive looking along the first corridor, with the camera behind.
       facing = Math.PI;
       camYaw = 0;
@@ -2014,12 +2102,13 @@ async function createGame(assets: Assets): Promise<Game> {
     roof.visible = ladder.visible = dungeon !== null;
     torch.intensity = dungeon ? 30 : 0;
     holeNear = null;
-    if (cave && dist < 4 && !driving) holeNear = cave;
+    // Walking onto the hole goes down; walking onto the ladder comes back up.
+    if (cave && !driving) atZone(cave.x, cave.z, 2.4, () => useHole(cave));
     if (dungeon) {
       const spot = ladderSpot(dungeon);
       roof.position.set(dungeon.x, dungeon.h + DUNGEON_HEIGHT, dungeon.z);
       ladder.position.copy(spot).setY(spot.y + 3);
-      if (Math.hypot(spot.x - who.x, spot.z - who.z) < 3.5) holeNear = dungeon;
+      atZone(spot.x, spot.z, 1.3, () => useHole(dungeon));
       // A sealed room: nobody walks out through the outer wall.
       const edge = DUNGEON_HALF - 1.2;
       player.pos.x = Math.min(dungeon.x + edge, Math.max(dungeon.x - edge, player.pos.x));
@@ -2187,7 +2276,7 @@ async function createGame(assets: Assets): Promise<Game> {
     { icon: '🏠', say: 'Great! Now let us visit the village.', target: () => offset(homeVillage, 0, 0), done: () => !!homeVillage && Math.hypot(homeVillage.x - player.pos.x, homeVillage.z - player.pos.z) < 26 },
     {
       icon: '🏡',
-      say: 'The house with the little house sign is yours! Walk up to it and tap the door.',
+      say: 'The house with the little house sign is yours! Walk up to the door and go in.',
       target: () => (homeVillage ? { x: homeVillage.buildings[1].x, z: homeVillage.buildings[1].z } : null),
       done: () => homeSeen,
     },
@@ -2199,7 +2288,7 @@ async function createGame(assets: Assets): Promise<Game> {
     { icon: '🎣', say: 'Let us go fishing. Stand at the edge of the water and tap the fishing button.', target: () => null, done: () => fishCount > 0 },
     { icon: '🏛️', say: 'Time for an adventure! Find the treasure in the middle of the maze.', target: () => offset(firstMaze, 0, 0), done: () => !!firstMaze && clearedForts.has(firstMaze.id) },
     { icon: '🏰', say: 'Are you brave? Beat the giant skeleton at the fort.', target: () => offset(firstFort, 0, 0), done: () => !!firstFort && clearedForts.has(firstFort.id) },
-    { icon: '🕳️', say: 'Last one! Go down the cave and find the dungeon treasure.', target: () => (underground && firstDungeon ? offset(firstDungeon, 0, 0) : offset(firstCave, 0, 0)), done: () => !!firstDungeon && clearedForts.has(firstDungeon.id) },
+    { icon: '🕳️', say: 'Last one! Walk into the cave and find the dungeon treasure.', target: () => (underground && firstDungeon ? offset(firstDungeon, 0, 0) : offset(firstCave, 0, 0)), done: () => !!firstDungeon && clearedForts.has(firstDungeon.id) },
   ];
   const guideEl = $('guide');
   const guideIcon = $('guide-icon');
@@ -2433,7 +2522,7 @@ async function createGame(assets: Assets): Promise<Game> {
         const talk = nearVillager?.persona === 'shop' ? '🛒' : '💬';
         const fishIcon = fishing && now >= fishing.biteAt ? '❗' : '🎣';
         const icon = inside
-          ? '🚪'
+          ? ''
           : riding
             ? '🚶'
             : fishing
@@ -2485,7 +2574,10 @@ async function createGame(assets: Assets): Promise<Game> {
       if (goalStar.visible) goalStar.rotation.y = now * 2;
       updateVillagers(dt, who);
       if (started) {
+        updateDoors(dt);
         updateExtras(who);
+        // Doorways work again once he has stepped clear of all of them.
+        if (!inAnyZone && !travelling) zonesArmed = true;
         updateGuide(dt, who);
       }
       for (const s of terrain.stars) {

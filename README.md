@@ -14,7 +14,7 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 | Run | Push the stick all the way | Hold Shift |
 | Jump | Arrow button | Space |
 | Crawl | Caterpillar button | C |
-| Fly (god mode) | Hero button; arrow goes up, the down button goes down | F; Space up, C down |
+| Fly | Hero button; arrow goes up, the down button goes down. Buildings, walls and boulders are solid; fly over them | F; Space up, C down |
 | Swim | Walk into deep water | Walk into deep water |
 | Look around | Drag the screen, pinch to zoom | Drag the mouse, wheel to zoom |
 | Fight | Pick the sword or wand, then tap the screen or the swords button | Click, or Q |
@@ -45,11 +45,11 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Bag:** the 🎒 button shows what he is carrying (fish, bones from skeletons, gems from chests and treasure) and what he owns. Hats can be put on and taken off from here.
 - **Market:** the village shop also buys. The top row lists what is in his bag; a tap sells one for coins.
 - **Map zoom:** the ➕ and ➖ buttons under the map zoom it in and out, and the choice is remembered. Tapping the map still makes it big.
-- **Caves and dungeons:** the 🕳️ on the map is a cave: a ring of boulders round a dark hole. Standing on the hole and tapping the button goes down into a dungeon, a dark stone maze lit only by his torch. A giant skeleton guards the treasure in the middle (40 coins and 6 stars). The ladder where he arrived goes back up. The first cave is north-west of the start.
+- **Caves and dungeons:** the 🕳️ on the map is a cave: a ring of boulders round a dark hole. Walking onto the hole goes down into a dungeon, a dark stone maze lit only by his torch. A giant skeleton guards the treasure in the middle (40 coins and 6 stars). Walking back onto the ladder where he arrived goes back up. The first cave is north-west of the start.
 - **Mazes:** the 🏛️ on the map is a stone maze with a big treasure chest in the middle (20 coins and 3 stars). The way in is on one side. The first is north of the start.
 - **Ring race:** every village has a 🏁 flag. Tapping the button there starts a race through eight rings round the village, on foot or in a car, with 90 seconds on the clock. Faster pays more coins.
 - **Fishing:** stand on a shore facing the water and a 🎣 button appears. Cast, wait for the float to dip (the button turns to ❗), then tap to reel in. Each fish is 2 coins.
-- **His house:** one house in each village is his. It has a 🏡 sign floating over it with his name, shows as 🏡 on the map, and is the only one with a door button. Inside is his room, the same one from every village.
+- **His house:** one house in each village is his. It has a 🏡 sign floating over it with his name, shows as 🏡 on the map, and has a front door that swings open as he walks up. Walking through it takes him inside; walking to the door in the room takes him back out. Inside is his room, the same one from every village.
 - **Arranging the room:** tap a piece of furniture to pick it up (it lifts), then tap the floor to put it there. Tap a picked-up piece again to turn it. The two buttons at the top right change the wall and floor colours. It all stays where he leaves it. The room starts with a bed and a rug; a lamp, shelf, cabinet, couch and table are sold at the market.
 - **Giving to friends:** standing next to a friend, the bag shows a 🎁 and their face. Tapping a fish, bone, gem or the coins hands one over.
 - **Hats:** the shop sells a party hat, a top hat and a crown. Tapping one he owns puts it on or takes it off.

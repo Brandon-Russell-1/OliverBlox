@@ -117,7 +117,8 @@ function villageIn(rx: number, rz: number): Village | null {
       const r = 26 + hash2(rx + i * 31, rz, 76) * 7;
       const bx = x + Math.sin(a) * r;
       const bz = z + Math.cos(a) * r;
-      const def = first + 1 + Math.floor(hash2(rx + i * 31, rz, 77) * others);
+      // The first house in a village is the player's own, and is always the same cottage.
+      const def = kind === 'village' && i === 0 ? 1 : first + 1 + Math.floor(hash2(rx + i * 31, rz, 77) * others);
       // Every building faces the middle.
       buildings.push({ def, x: bx, z: bz, rot: Math.atan2(x - bx, z - bz), scale: BUILDING_SCALE });
     }
@@ -310,6 +311,8 @@ interface Collider {
   x: number;
   z: number;
   r: number;
+  /** Height of its top, so anyone flying above it passes over. */
+  top: number;
 }
 
 export interface Star {
@@ -468,7 +471,7 @@ export class Terrain {
       const density = smoothstep(0.42, 0.68, fbm(x / 130, z / 130, 2, 7));
       if (roll > density * 0.9 + 0.05) continue;
       put(pick(this.props.trees), x, z, h, size);
-      colliders.push({ x, z, r: size * 0.05 });
+      colliders.push({ x, z, r: size * 0.05, top: h + size });
     }
     for (let i = 0; i < 5; i++) {
       const x = ox + rng() * CHUNK;
@@ -480,7 +483,7 @@ export class Terrain {
       if (roll > (h > 28 ? 0.9 : 0.4)) continue;
       const def = pick(this.props.rocks);
       const scale = put(def, x, z, h - size * 0.1, size);
-      if (size > 1) colliders.push({ x, z, r: def.radius * scale * 0.75 });
+      if (size > 1) colliders.push({ x, z, r: def.radius * scale * 0.75, top: h + size });
     }
     for (let i = 0; i < 7; i++) {
       const x = ox + rng() * CHUNK;
@@ -507,7 +510,7 @@ export class Terrain {
         const x = village.x + Math.sin(a) * 7.5;
         const z = village.z + Math.cos(a) * 7.5;
         put(pick(this.props.rocks), x, z, groundAt(x, z) - 0.6, 6 + rng() * 3);
-        colliders.push({ x, z, r: 2.6 });
+        colliders.push({ x, z, r: 2.6, top: groundAt(x, z) + 6 });
       }
     }
 
@@ -517,7 +520,7 @@ export class Terrain {
       if (b.x < ox || b.x >= ox + CHUNK || b.z < oz || b.z >= oz + CHUNK) continue;
       const def = this.props.buildings[b.def];
       built.push({ def, x: b.x, y: groundAt(b.x, b.z) - 0.15, z: b.z, scale: b.scale, rot: b.rot });
-      colliders.push({ x: b.x, z: b.z, r: def.radius * b.scale * 0.8 });
+      colliders.push({ x: b.x, z: b.z, r: def.radius * b.scale * 0.8, top: groundAt(b.x, b.z) + def.height * b.scale });
     }
 
     // ---- maze walls that stand in this chunk ----
@@ -527,7 +530,7 @@ export class Terrain {
       walled.push({ def: village?.kind === 'dungeon' ? WALL_TALL : WALL, x: w.x, y: groundAt(w.x, w.z) - 0.4, z: w.z, scale: 1, rot: w.rot });
       // A row of small circles along the wall stops anyone walking through it.
       for (let t = -4; t <= 4.01; t += 1.6) {
-        colliders.push({ x: w.x + Math.cos(w.rot) * t, z: w.z - Math.sin(w.rot) * t, r: 0.85 });
+        colliders.push({ x: w.x + Math.cos(w.rot) * t, z: w.z - Math.sin(w.rot) * t, r: 0.85, top: groundAt(w.x, w.z) + (village?.kind === 'dungeon' ? 12 : 5) });
       }
     }
 
@@ -695,6 +698,7 @@ export class Terrain {
         const chunk = this.chunks.get(`${cx + dx},${cz + dz}`);
         if (!chunk) continue;
         for (const c of chunk.colliders) {
+          if (pos.y > c.top) continue;
           const ox = pos.x - c.x;
           const oz = pos.z - c.z;
           const min = c.r + radius;

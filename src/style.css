@@ -796,6 +796,21 @@ body:not(.touch) #fly {
   width: 76px;
 }
 
+/* The moment of dark when walking through a door or down a cave. */
+#fade {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.32s ease;
+}
+
+#fade.on {
+  opacity: 1;
+}
+
 #break {
   position: fixed;
   inset: 0;

@@ -41,6 +41,7 @@ export class Home {
   private readonly walls: THREE.MeshLambertMaterial;
   private readonly floor: THREE.MeshLambertMaterial;
   private selected = '';
+  private readonly hinge = new THREE.Group();
 
   constructor(scene: THREE.Scene) {
     const { halfX, halfZ, height } = ROOM;
@@ -55,10 +56,16 @@ export class Home {
     boards.receiveShadow = true;
     // The way out, on the +z wall.
     const door = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.6, 0.2), new THREE.MeshLambertMaterial({ color: 0x7a4f2a }));
-    door.position.set(0, 1.8, halfZ - 0.1);
+    // Hinged on one edge, so it can swing.
+    door.position.set(1.1, 1.8, 0);
+    this.hinge.position.set(-1.1, 0, halfZ - 0.1);
+    this.hinge.add(door);
+    const doorway = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.6), new THREE.MeshBasicMaterial({ color: 0x9fd4ff }));
+    doorway.position.set(0, 1.8, halfZ - 0.02);
+    doorway.rotation.y = Math.PI;
     const light = new THREE.PointLight(0xfff0d0, 60, 30);
     light.position.set(0, height - 1, 0);
-    this.group.add(box, boards, door, light);
+    this.group.add(box, boards, this.hinge, doorway, light);
     this.group.position.set(ROOM.x, ROOM.y, ROOM.z);
     this.group.visible = false;
     scene.add(this.group);
@@ -156,6 +163,11 @@ export class Home {
     this.selected = key;
     const piece = this.pieces.get(key);
     if (piece) piece.position.y = 0.5;
+  }
+
+  /** Swing the door: 0 shut, 1 wide open. */
+  swing(open: number): void {
+    this.hinge.rotation.y = open * 1.7;
   }
 
   /** Keep a point (the hero or the camera) inside the walls. */
