@@ -151,9 +151,60 @@ button {
   display: none;
 }
 
-#action {
+.round.small {
+  width: 70px;
+  height: 70px;
+  font-size: 32px;
+}
+
+.round.on {
+  background: rgba(120, 220, 255, 0.95);
+  border-color: #fff;
+}
+
+#crawl {
   right: calc(136px + env(safe-area-inset-right));
-  bottom: calc(150px + env(safe-area-inset-bottom));
+  bottom: calc(84px + env(safe-area-inset-bottom));
+}
+
+#fly {
+  right: calc(40px + env(safe-area-inset-right));
+  bottom: calc(204px + env(safe-area-inset-bottom));
+}
+
+body:not(.touch) #crawl {
+  right: 112px;
+  bottom: 28px;
+}
+
+body:not(.touch) #fly {
+  right: 28px;
+  bottom: 28px;
+}
+
+#play[hidden] {
+  display: none;
+}
+
+#loading {
+  width: min(50vw, 320px);
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+}
+
+#loading-bar {
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: #fff;
+  transition: width 0.2s;
+}
+
+#action {
+  right: calc(150px + env(safe-area-inset-right));
+  bottom: calc(176px + env(safe-area-inset-bottom));
   background: rgba(255, 220, 80, 0.92);
   animation: bounce 0.9s ease-in-out infinite;
 }
@@ -196,7 +247,7 @@ body.touch #jump {
 
 /* On PC the action button sits by the hotbar instead of under a thumb. */
 body:not(.touch) #action {
-  right: 28px;
+  right: 196px;
   bottom: 28px;
 }
 
@@ -240,4 +291,10 @@ body:not(.touch) #action {
 
 #play:active {
   box-shadow: 0 3px 0 #1f9a39;
+}
+
+#loading[hidden],
+#crawl[hidden],
+#fly[hidden] {
+  display: none;
 }

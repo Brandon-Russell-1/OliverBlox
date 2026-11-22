@@ -18,33 +18,53 @@ export class Input {
   moveX = 0;
   /** -1..1, forward is positive. */
   moveZ = 0;
+  /** Jump, or fly up in god mode. */
   jump = false;
+  /** Shift on a keyboard, or the stick pushed all the way out. */
+  run = false;
+  /** Held crawl control: fly down in god mode. */
+  down = false;
 
   onAction: () => void = () => {};
   onTap: (x: number, y: number, button: number) => void = () => {};
   onDrag: (dx: number, dy: number) => void = () => {};
   onZoom: (amount: number) => void = () => {};
   onHotkey: (n: number) => void = () => {};
+  onCrawl: () => void = () => {};
+  onFly: () => void = () => {};
 
   private keys = new Set<string>();
   private joyX = 0;
   private joyY = 0;
   private jumpButton = false;
+  /** Remembers a quick tap that started and ended between two frames. */
+  private jumpTapped = false;
+  private crawlButton = false;
   private pointers = new Map<number, Pointer>();
   private pinchDist = 0;
 
-  constructor(canvas: HTMLCanvasElement, joystick: HTMLElement, knob: HTMLElement, jump: HTMLElement) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    joystick: HTMLElement,
+    knob: HTMLElement,
+    jump: HTMLElement,
+    crawl: HTMLElement,
+  ) {
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
+      if (e.code === 'Space') this.jumpTapped = true;
       if (e.code === 'KeyE' || e.code === 'Enter') this.onAction();
+      if (e.code === 'KeyC') this.onCrawl();
+      if (e.code === 'KeyF') this.onFly();
       if (e.code.startsWith('Digit')) this.onHotkey(Number(e.code.slice(5)));
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.jumpButton = false;
+      this.crawlButton = false;
     });
 
     // ---- joystick ----
@@ -80,12 +100,25 @@ export class Input {
     jump.addEventListener('pointerdown', (e) => {
       capture(jump, e.pointerId);
       this.jumpButton = true;
+      this.jumpTapped = true;
     });
     const jumpEnd = (): void => {
       this.jumpButton = false;
     };
     jump.addEventListener('pointerup', jumpEnd);
     jump.addEventListener('pointercancel', jumpEnd);
+
+    // ---- crawl button (doubles as "fly down") ----
+    crawl.addEventListener('pointerdown', (e) => {
+      capture(crawl, e.pointerId);
+      this.crawlButton = true;
+      this.onCrawl();
+    });
+    const crawlEnd = (): void => {
+      this.crawlButton = false;
+    };
+    crawl.addEventListener('pointerup', crawlEnd);
+    crawl.addEventListener('pointercancel', crawlEnd);
 
     // ---- canvas: drag to look, tap to build, pinch or wheel to zoom ----
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -145,6 +178,8 @@ export class Input {
   /** Call once per frame before reading moveX / moveZ / jump. */
   update(): void {
     const k = this.keys;
+    this.run = k.has('ShiftLeft') || k.has('ShiftRight') || Math.hypot(this.joyX, this.joyY) > 0.8;
+    this.down = this.crawlButton || k.has('KeyC');
     let x = this.joyX;
     let z = -this.joyY;
     if (k.has('KeyA') || k.has('ArrowLeft')) x -= 1;
@@ -158,7 +193,8 @@ export class Input {
     }
     this.moveX = x;
     this.moveZ = z;
-    this.jump = this.jumpButton || k.has('Space');
+    this.jump = this.jumpButton || this.jumpTapped || k.has('Space');
+    this.jumpTapped = false;
   }
 }
 

@@ -1,33 +1,44 @@
 import * as THREE from 'three';
 import './style.css';
-import { World, SY, CENTER, GROUND, WATER_Y, AIR, HOTBAR, BLOCK_COLORS, mulberry32 } from './world';
-import { type Body, moveBody, bodyFits, bodyTouchesCell } from './physics';
+import { loadAssets, type Assets } from './assets';
+import { Terrain, groundAt, SEA_LEVEL } from './terrain';
+import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
+import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
+import { Animals } from './animals';
 import { sfx, speak, unlockAudio } from './audio';
-import { makeAvatar, makeCar, makeRobot, makeStar, makeClouds } from './models';
+import { makeRobot, makeClouds } from './models';
 
-const SAVE_KEY = 'oliverblox-save-v1';
-const STAR_COUNT = 10;
-const REACH = 14;
-const WALK_SPEED = 5.2;
-const JUMP_SPEED = 8.6;
-const CAR_MAX = 11;
-const SKY = 0x8fd3ff;
+const SAVE_KEY = 'oliverblox-save-v2';
+const WALK_SPEED = 4.2;
+const RUN_SPEED = 9;
+const CRAWL_SPEED = 1.9;
+const SWIM_SPEED = 3.4;
+const FLY_SPEED = 16;
+const JUMP_SPEED = 9.8;
+const CAR_MAX = 18;
+const CAR_SCALE = 2;
+/** Water deeper than this is for swimming, shallower is for wading. */
+const SWIM_DEPTH = 1.3;
+/** Where the feet float while swimming, so the head stays above water. */
+const SWIM_Y = SEA_LEVEL - 1.5;
+const STAND_H = 2.1;
+const CRAWL_H = 1;
+const HORIZON = 0xb5dcff;
 
 interface Save {
-  v: 1;
-  edits: [number, number][];
-  round: number;
-  got: number[];
+  v: 2;
+  blocks: [number, number, number, number][];
+  stars: string[];
   player: [number, number, number];
-  car: [number, number, number, number];
+  car: [number, number, number];
 }
 
 function loadSave(): Save | null {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     const s = raw ? (JSON.parse(raw) as Save) : null;
-    return s && s.v === 1 ? s : null;
+    return s && s.v === 2 ? s : null;
   } catch {
     return null;
   }
@@ -37,146 +48,132 @@ function $<T extends HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
 
-// ---------- scene ----------
+const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+if (isTouch) document.body.classList.add('touch');
+
+// ---------- renderer, sky and light ----------
 
 const canvas = $<HTMLCanvasElement>('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isTouch ? 1.5 : 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 70, 170);
+scene.fog = new THREE.Fog(HORIZON, 115, 198);
+const camera = new THREE.PerspectiveCamera(62, 1, 0.2, 1500);
 
-const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 500);
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(1000, 24, 12),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      top: { value: new THREE.Color(0x2674f0) },
+      bottom: { value: new THREE.Color(HORIZON) },
+    },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 top;
+      uniform vec3 bottom;
+      varying vec3 vDir;
+      void main() {
+        float h = clamp(normalize(vDir).y * 2.4, 0.0, 1.0);
+        gl_FragColor = vec4(mix(bottom, top, pow(h, 0.6)), 1.0);
+        #include <colorspace_fragment>
+      }`,
+  }),
+);
+scene.add(sky);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x9a8f78, 1.7));
-const sun = new THREE.DirectionalLight(0xfff4d6, 1.9);
-sun.position.set(0.5, 1, 0.3);
-scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xdcefff, 0x9c9074, 1.25));
+const sun = new THREE.DirectionalLight(0xfff3d6, 2.1);
+sun.castShadow = true;
+sun.shadow.mapSize.setScalar(isTouch ? 1024 : 2048);
+sun.shadow.camera.left = sun.shadow.camera.bottom = -55;
+sun.shadow.camera.right = sun.shadow.camera.top = 55;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 320;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.5;
+scene.add(sun, sun.target);
+const SUN_OFFSET = new THREE.Vector3(70, 120, 45);
 
 const water = new THREE.Mesh(
-  new THREE.PlaneGeometry(700, 700),
-  new THREE.MeshLambertMaterial({ color: 0x2f9be6, transparent: true, opacity: 0.72 }),
+  new THREE.PlaneGeometry(3000, 3000),
+  new THREE.MeshLambertMaterial({ color: 0x1f9bea, transparent: true, opacity: 0.8, depthWrite: false }),
 );
 water.rotation.x = -Math.PI / 2;
-water.position.set(CENTER, WATER_Y, CENTER);
-const seabed = new THREE.Mesh(
-  new THREE.PlaneGeometry(700, 700),
-  new THREE.MeshLambertMaterial({ color: 0xd9c98a }),
-);
-seabed.rotation.x = -Math.PI / 2;
-seabed.position.set(CENTER, 1.9, CENTER);
+water.position.y = SEA_LEVEL;
+water.renderOrder = 1;
 const clouds = makeClouds();
-scene.add(seabed, water, clouds);
+scene.add(water, clouds);
 
-// ---------- world and saved state ----------
+// ---------- state ----------
 
 const save = loadSave();
-const world = new World(scene);
-if (save) world.applyEdits(save.edits);
-world.rebuild();
+const collected = new Set<string>(save?.stars ?? []);
+const blocks = new Blocks(scene);
+if (save) blocks.load(save.blocks);
 
 const player: Body = {
-  pos: new THREE.Vector3(CENTER + 5.5, GROUND, CENTER + 6.5),
+  pos: new THREE.Vector3(0, groundAt(0, 0), 0),
   vel: new THREE.Vector3(),
-  hw: 0.3,
-  h: 1.75,
-  onGround: false,
+  hw: 0.4,
+  h: STAND_H,
+  onGround: true,
 };
-const carBody: Body = {
-  pos: new THREE.Vector3(CENTER + 0.5, GROUND, CENTER + 14.5),
-  vel: new THREE.Vector3(),
-  hw: 0.9,
-  h: 1.4,
-  onGround: false,
-};
+const carPos = new THREE.Vector3(9, groundAt(9, 7), 7);
 let carHeading = Math.PI / 2;
 let carSpeed = 0;
-let driving = false;
-
 if (save) {
   player.pos.fromArray(save.player);
-  carBody.pos.set(save.car[0], save.car[1], save.car[2]);
-  carHeading = save.car[3];
-  // If something was built where we were standing, pop up on top of it.
-  for (const b of [player, carBody]) {
-    while (!bodyFits(world, b.pos, b.hw, b.h) && b.pos.y < SY) b.pos.y = Math.floor(b.pos.y) + 1;
-  }
+  player.pos.y = Math.max(player.pos.y, groundAt(player.pos.x, player.pos.z));
+  carPos.set(save.car[0], 0, save.car[1]);
+  carPos.y = groundAt(carPos.x, carPos.z);
+  carHeading = save.car[2];
 }
 
-const avatar = makeAvatar();
-const car = makeCar();
-const robot = makeRobot();
-const robotPos = new THREE.Vector3(CENTER + 2.5, GROUND, CENTER + 4.5);
-robot.position.copy(robotPos);
-scene.add(avatar.group, car.group, robot);
-let facing = Math.PI;
-let walkPhase = 0;
+let started = false;
+let dirty = false;
+let resetting = false;
+let driving = false;
+let flying = false;
+let crawling = false;
+let swimming = false;
+let facing = 0;
+let airTime = 0;
+let cheerUntil = 0;
 
-// ---------- stars ----------
+let camYaw = Math.PI;
+let camPitch = 0.38;
+let camDist = 10;
+const camTarget = new THREE.Vector3().copy(player.pos).setY(player.pos.y + 1.8);
 
-let round = save?.round ?? 0;
-const got = new Set<number>(save?.got ?? []);
-let stars: { mesh: THREE.Mesh; pos: THREE.Vector3; index: number }[] = [];
+// ---------- HUD ----------
+
 const starCountEl = $('star-count');
 const starsEl = $('stars');
-
-function spawnStars(): void {
-  for (const s of stars) scene.remove(s.mesh);
-  stars = [];
-  const spots = world.findSpots(mulberry32(1000 + round * 7919), STAR_COUNT);
-  spots.forEach((pos, index) => {
-    if (got.has(index)) return;
-    const mesh = makeStar();
-    mesh.position.copy(pos).setY(pos.y + 1.1);
-    scene.add(mesh);
-    stars.push({ mesh, pos, index });
-  });
-  starCountEl.textContent = `${got.size}/${STAR_COUNT}`;
-}
-spawnStars();
-
-function collectStar(i: number): void {
-  const s = stars[i];
-  scene.remove(s.mesh);
-  stars.splice(i, 1);
-  got.add(s.index);
-  starCountEl.textContent = `${got.size}/${STAR_COUNT}`;
-  starsEl.classList.remove('pop');
-  void starsEl.offsetWidth;
-  starsEl.classList.add('pop');
-  dirty = true;
-
-  if (got.size < STAR_COUNT) {
-    sfx.star();
-    // Counting out loud as he collects.
-    speak(String(got.size));
-    return;
-  }
-  sfx.win();
-  speak('Wow! You found all ten stars!');
-  window.setTimeout(() => {
-    round++;
-    got.clear();
-    spawnStars();
-    dirty = true;
-    speak('Here are ten more stars. Can you find them?');
-  }, 4500);
-}
-
-// ---------- hotbar ----------
+const jumpEl = $('jump');
+const crawlEl = $('crawl');
+const flyEl = $('fly');
+const actionEl = $('action');
+const bubble = $('bubble');
+starCountEl.textContent = String(collected.size);
 
 /** 0 is the pickaxe; 1.. are HOTBAR blocks. */
 let tool = 1;
-const hotbarEl = $('hotbar');
 const toolButtons: HTMLButtonElement[] = [];
-
 function selectTool(n: number): void {
   if (n < 0 || n > HOTBAR.length) return;
   tool = n;
   toolButtons.forEach((b, i) => b.classList.toggle('selected', i === n));
 }
-
 for (let i = 0; i <= HOTBAR.length; i++) {
   const b = document.createElement('button');
   if (i === 0) b.textContent = '⛏️';
@@ -185,134 +182,73 @@ for (let i = 0; i <= HOTBAR.length; i++) {
     e.preventDefault();
     selectTool(i);
   });
-  hotbarEl.appendChild(b);
+  $('hotbar').appendChild(b);
   toolButtons.push(b);
 }
 selectTool(tool);
 
 // ---------- input ----------
 
-const jumpEl = $('jump');
-const actionEl = $('action');
-const input = new Input(canvas, $('joystick'), $('knob'), jumpEl);
-if (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window) {
-  document.body.classList.add('touch');
-}
-
-let camYaw = 0;
-let camPitch = 0.45;
-let camDist = 8;
-let camDistNow = 8;
-const camTarget = new THREE.Vector3().copy(player.pos).setY(player.pos.y + 1.5);
-let started = false;
-let dirty = false;
-
+const input = new Input(canvas, $('joystick'), $('knob'), jumpEl, crawlEl);
 input.onDrag = (dx, dy) => {
   camYaw -= dx * 0.006;
-  camPitch = Math.min(1.35, Math.max(0.08, camPitch + dy * 0.005));
+  camPitch = Math.min(1.4, Math.max(-0.15, camPitch + dy * 0.005));
 };
 input.onZoom = (amount) => {
-  camDist = Math.min(16, Math.max(4, camDist + amount));
+  camDist = Math.min(24, Math.max(5, camDist + amount));
 };
 input.onHotkey = (n) => selectTool(n - 1);
 
-function nearCar(): boolean {
-  return player.pos.distanceTo(carBody.pos) < 3.6;
-}
-
-function enterCar(): void {
-  driving = true;
-  carSpeed = 0;
-  avatar.group.visible = false;
-  sfx.door();
-}
-
-function exitCar(): void {
-  // Step out to the side; if every side is blocked, climb out onto the roof.
-  const side = new THREE.Vector3(Math.cos(carHeading), 0, -Math.sin(carHeading));
-  const fwd = new THREE.Vector3(Math.sin(carHeading), 0, Math.cos(carHeading));
-  const tries = [side.clone().multiplyScalar(1.6), side.clone().multiplyScalar(-1.6), fwd.clone().multiplyScalar(-2.2)];
-  let out = carBody.pos.clone().setY(carBody.pos.y + carBody.h + 0.1);
-  for (const t of tries) {
-    const p = carBody.pos.clone().add(t);
-    if (bodyFits(world, p, player.hw, player.h)) {
-      out = p;
-      break;
-    }
-  }
-  player.pos.copy(out);
+function setFlying(on: boolean): void {
+  flying = on;
+  if (on) setCrawling(false);
   player.vel.set(0, 0, 0);
-  driving = false;
-  carSpeed = 0;
-  avatar.group.visible = true;
+  flyEl.classList.toggle('on', on);
+  crawlEl.textContent = on ? '⬇️' : '🐛';
   sfx.door();
 }
 
-input.onAction = () => {
-  if (!started) return;
-  if (driving) exitCar();
-  else if (nearCar()) enterCar();
-  dirty = true;
+function setCrawling(on: boolean): void {
+  // Only stand back up where there is headroom.
+  if (!on && blocks.collides(player.pos.x, player.pos.y, player.pos.z, player.hw, STAND_H)) return;
+  crawling = on;
+  player.h = on ? CRAWL_H : STAND_H;
+  crawlEl.classList.toggle('on', on);
+}
+
+input.onFly = () => {
+  if (started && !driving) setFlying(!flying);
 };
-actionEl.addEventListener('pointerdown', (e) => {
+flyEl.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  input.onAction();
+  input.onFly();
 });
-
-const tapRay = new THREE.Vector3();
-input.onTap = (px, py, button) => {
-  if (!started || driving) return;
-  tapRay
-    .set((px / window.innerWidth) * 2 - 1, -(py / window.innerHeight) * 2 + 1, 0.5)
-    .unproject(camera)
-    .sub(camera.position)
-    .normalize();
-  const hit = world.raycast(camera.position, tapRay, 80);
-  if (!hit) return;
-  const dx = hit.x + 0.5 - player.pos.x;
-  const dy = hit.y + 0.5 - (player.pos.y + 1);
-  const dz = hit.z + 0.5 - player.pos.z;
-  if (Math.hypot(dx, dy, dz) > REACH) return;
-
-  if (tool === 0 || button === 2) {
-    if (world.edit(hit.x, hit.y, hit.z, AIR)) {
-      sfx.remove();
-      dirty = true;
-    }
-    return;
-  }
-  const { px: x, py: y, pz: z } = hit;
-  if (bodyTouchesCell(player, x, y, z) || bodyTouchesCell(carBody, x, y, z)) return;
-  if (world.edit(x, y, z, HOTBAR[tool - 1])) {
-    sfx.place();
-    dirty = true;
-  }
+input.onCrawl = () => {
+  if (started && !driving && !flying && !swimming) setCrawling(!crawling);
 };
 
-// ---------- start, save, reset ----------
+// ---------- start screen ----------
 
 function start(): void {
-  if (started) return;
+  if (started || !game) return;
   started = true;
   unlockAudio();
   $('start').hidden = true;
   $('hud').hidden = false;
+  speak('Hi! I am Bolt! Let us go exploring!');
+  bubbleUntil = performance.now() / 1000 + 5;
 }
 $('play').addEventListener('click', start);
-if (new URLSearchParams(location.search).has('autostart')) start();
-
-let resetting = false;
 
 function saveNow(): void {
-  if (!dirty || resetting) return;
+  if (!dirty || resetting || !game) return;
   dirty = false;
   const s: Save = {
-    v: 1,
-    edits: [...world.edits],
-    round,
-    got: [...got],
+    v: 2,
+    blocks: blocks.save(),
+    stars: [...collected],
     player: [player.pos.x, player.pos.y, player.pos.z],
-    car: [carBody.pos.x, carBody.pos.y, carBody.pos.z, carHeading],
+    car: [carPos.x, carPos.z, carHeading],
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
@@ -321,23 +257,21 @@ function saveNow(): void {
   }
 }
 window.setInterval(saveNow, 3000);
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    dirty = true;
-    saveNow();
-  }
-});
-window.addEventListener('pagehide', () => {
+const saveOnLeave = (): void => {
   dirty = true;
   saveNow();
+};
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) saveOnLeave();
 });
+window.addEventListener('pagehide', saveOnLeave);
 
 // The reset is for grown-ups: it needs a long press and then a confirmation.
 const gear = $('gear');
 let gearTimer = 0;
 gear.addEventListener('pointerdown', () => {
   gearTimer = window.setTimeout(() => {
-    if (window.confirm('Start a brand new world? Everything built in this one will be erased.')) {
+    if (window.confirm('Start over? This erases the blocks built, the stars found and where you are.')) {
       resetting = true;
       localStorage.removeItem(SAVE_KEY);
       location.reload();
@@ -348,138 +282,398 @@ for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) {
   gear.addEventListener(ev, () => window.clearTimeout(gearTimer));
 }
 
-// ---------- Bolt the robot ----------
+// ---------- the game proper, built once the models have loaded ----------
 
-const bubble = $('bubble');
-let boltNear = false;
+interface Game {
+  frame(dt: number, time: number): void;
+}
+let game: Game | null = null;
 let bubbleUntil = 0;
-const boltHead = new THREE.Vector3();
 
-function updateBolt(time: number, who: THREE.Vector3): void {
-  robot.position.y = robotPos.y + Math.abs(Math.sin(time * 2.2)) * 0.08;
-  robot.rotation.y = Math.atan2(who.x - robotPos.x, who.z - robotPos.z);
+function createGame(assets: Assets): Game {
+  const terrain = new Terrain(scene, assets.props, collected);
+  const animals = new Animals(scene, assets.pets);
+  // Have the ground under our feet before the first frame.
+  terrain.update(player.pos.x, player.pos.z, 25);
 
-  const near = who.distanceTo(robotPos) < 4;
-  if (near && !boltNear && started) {
-    const left = STAR_COUNT - got.size;
-    speak(
-      left === STAR_COUNT
-        ? 'Hi! I am Bolt! Can you find ten stars?'
-        : `Hi again! ${left} more ${left === 1 ? 'star' : 'stars'} to find!`,
-    );
-    bubble.textContent = `⭐ × ${left}`;
-    bubbleUntil = time + 5;
+  // ---- player character ----
+  const avatar = new THREE.Group();
+  const tilt = new THREE.Group();
+  tilt.position.y = 1.1;
+  assets.character.position.y = -1.1;
+  tilt.add(assets.character);
+  avatar.add(tilt);
+  scene.add(avatar);
+
+  const mixer = new THREE.AnimationMixer(assets.character);
+  const actions = new Map<string, THREE.AnimationAction>();
+  for (const name of [
+    'Idle_A',
+    'Walking_A',
+    'Running_A',
+    'Jump_Idle',
+    'Crawling',
+    'Crouching',
+    'Cheering',
+  ]) {
+    const clip = assets.clips.get(name);
+    if (clip) actions.set(name, mixer.clipAction(clip));
   }
-  boltNear = near;
+  let current = '';
+  const play = (name: string, speed = 1): void => {
+    const next = actions.get(name);
+    if (!next) return;
+    next.timeScale = speed;
+    if (name === current) return;
+    actions.get(current)?.fadeOut(0.18);
+    next.reset().fadeIn(0.18).play();
+    current = name;
+  };
+  play('Idle_A');
 
-  boltHead.copy(robot.position).setY(robot.position.y + 2.5).project(camera);
-  const show = time < bubbleUntil && boltHead.z < 1;
-  bubble.hidden = !show;
-  if (show) {
-    bubble.style.left = `${(boltHead.x * 0.5 + 0.5) * window.innerWidth}px`;
-    bubble.style.top = `${(-boltHead.y * 0.5 + 0.5) * window.innerHeight}px`;
-  }
-}
+  // ---- car ----
+  const car = new THREE.Group();
+  assets.car.scale.setScalar(CAR_SCALE);
+  car.add(assets.car);
+  car.rotation.order = 'YXZ';
+  scene.add(car);
+  const wheels: THREE.Object3D[] = [];
+  assets.car.traverse((o) => {
+    if (o.name.startsWith('wheel')) wheels.push(o);
+  });
+  // The model's wheels sit a little below its origin.
+  const carLift = 0.3 * CAR_SCALE;
 
-// ---------- per-frame updates ----------
+  // ---- Bolt, the robot friend who tags along ----
+  const robot = makeRobot();
+  robot.scale.setScalar(0.6);
+  robot.traverse((o) => {
+    o.castShadow = true;
+  });
+  robot.position.copy(player.pos).add(new THREE.Vector3(2, 2, -2));
+  scene.add(robot);
+  const boltWant = new THREE.Vector3();
+  const boltHead = new THREE.Vector3();
 
-let wasJump = false;
+  const nearCar = (): boolean => player.pos.distanceTo(carPos) < 5;
 
-function updatePlayer(dt: number): void {
-  const sin = Math.sin(camYaw);
-  const cos = Math.cos(camYaw);
-  // Camera-relative movement: forward is away from the camera.
-  const mx = -sin * input.moveZ + cos * input.moveX;
-  const mz = -cos * input.moveZ - sin * input.moveX;
-  player.vel.x = mx * WALK_SPEED;
-  player.vel.z = mz * WALK_SPEED;
-  const moving = Math.hypot(mx, mz) > 0.1;
-  if (moving) facing = Math.atan2(mx, mz);
-
-  if (input.jump && player.onGround) {
-    player.vel.y = JUMP_SPEED;
-    player.onGround = false;
-    sfx.jump();
-  }
-  const before = player.pos.clone();
-  moveBody(world, player, dt);
-  if (!before.equals(player.pos)) dirty = true;
-
-  avatar.group.position.copy(player.pos);
-  // Turn smoothly toward the direction of travel.
-  let diff = facing - avatar.group.rotation.y;
-  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-  avatar.group.rotation.y += diff * Math.min(1, 14 * dt);
-
-  if (moving) walkPhase += dt * 11;
-  const swing = moving ? Math.sin(walkPhase) * 0.8 : 0;
-  avatar.legL.rotation.x = swing;
-  avatar.legR.rotation.x = -swing;
-  // Arms go up for a real jump or fall, not for the tiny drops of walking downhill.
-  const airborne = !player.onGround && Math.abs(player.vel.y) > 3;
-  avatar.armL.rotation.x = airborne ? -2.6 : -swing;
-  avatar.armR.rotation.x = airborne ? -2.6 : swing;
-}
-
-function updateCar(dt: number, controlled: boolean): void {
-  if (controlled) {
-    if (Math.abs(input.moveZ) > 0.1) carSpeed += input.moveZ * 14 * dt;
-    else carSpeed *= Math.max(0, 1 - 2.5 * dt);
-    carSpeed = Math.min(CAR_MAX, Math.max(-5, carSpeed));
-    carHeading -= input.moveX * 2.3 * dt * Math.min(1, Math.max(-1, carSpeed / 4));
-    if (input.jump && !wasJump) sfx.honk();
-  } else {
+  function enterCar(): void {
+    setFlying(false);
+    setCrawling(false);
+    driving = true;
     carSpeed = 0;
+    avatar.visible = false;
   }
-  carBody.vel.x = Math.sin(carHeading) * carSpeed;
-  carBody.vel.z = Math.cos(carHeading) * carSpeed;
 
-  const bx = carBody.pos.x;
-  const bz = carBody.pos.z;
-  moveBody(world, carBody, dt);
-  const moved = Math.hypot(carBody.pos.x - bx, carBody.pos.z - bz);
-  // Bumped into something: lose most of the speed instead of grinding against it.
-  if (Math.abs(carSpeed) > 1 && moved < Math.abs(carSpeed) * dt * 0.3) carSpeed *= 0.3;
-  if (moved > 0) dirty = true;
+  function exitCar(): void {
+    driving = false;
+    carSpeed = 0;
+    // Step out on the left side of the car.
+    player.pos.set(carPos.x + Math.cos(carHeading) * 3, 0, carPos.z - Math.sin(carHeading) * 3);
+    player.pos.y = Math.max(groundAt(player.pos.x, player.pos.z), SWIM_Y);
+    player.vel.set(0, 0, 0);
+    avatar.visible = true;
+    sfx.door();
+  }
 
-  car.group.position.copy(carBody.pos);
-  car.group.rotation.y = carHeading;
-  for (const w of car.wheels) w.rotation.x += (carSpeed * dt) / 0.38;
+  input.onAction = () => {
+    if (!started) return;
+    if (driving) exitCar();
+    else if (nearCar()) enterCar();
+    dirty = true;
+  };
+  actionEl.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    input.onAction();
+  });
 
-  if (controlled) {
-    // Keep the camera behind the car so "up" on the stick always means "go".
-    let diff = carHeading + Math.PI - camYaw;
+  // ---- building ----
+  const ray = new THREE.Vector3();
+  input.onTap = (px, py, button) => {
+    if (!started || driving) return;
+    ray
+      .set((px / window.innerWidth) * 2 - 1, -(py / window.innerHeight) * 2 + 1, 0.5)
+      .unproject(camera)
+      .sub(camera.position)
+      .normalize();
+    const hit = blocks.raycast(camera.position, ray, flying ? 90 : 45);
+    if (!hit) return;
+    const reach = flying ? 60 : 18;
+    if (Math.hypot(hit.x + 0.5 - player.pos.x, hit.y + 0.5 - player.pos.y - 1, hit.z + 0.5 - player.pos.z) > reach) {
+      return;
+    }
+    if (tool === 0 || button === 2) {
+      if (hit.kind === 'block' && blocks.set(hit.x, hit.y, hit.z, 0)) {
+        sfx.remove();
+        dirty = true;
+      }
+      return;
+    }
+    if (bodyTouchesCell(player, hit.px, hit.py, hit.pz)) return;
+    if (blocks.set(hit.px, hit.py, hit.pz, HOTBAR[tool - 1])) {
+      sfx.place();
+      dirty = true;
+    }
+  };
+
+  // ---- per-frame updates ----
+  let wasJump = false;
+  let tiltNow = 0;
+  let liftNow = 0;
+
+  function updatePlayer(dt: number, time: number): void {
+    const { pos, vel } = player;
+    const sin = Math.sin(camYaw);
+    const cos = Math.cos(camYaw);
+    // Camera-relative movement: forward is away from the camera.
+    const mx = -sin * input.moveZ + cos * input.moveX;
+    const mz = -cos * input.moveZ - sin * input.moveX;
+    const moving = Math.hypot(mx, mz) > 0.1;
+    if (moving) facing = Math.atan2(mx, mz);
+    const ground = groundAt(pos.x, pos.z);
+    const before = pos.clone();
+
+    if (flying) {
+      // God mode: no gravity, no walls, straight over mountains and sea.
+      const speed = FLY_SPEED * (input.run ? 2 : 1);
+      vel.set(mx * speed, ((input.jump ? 1 : 0) - (input.down ? 1 : 0)) * 11, mz * speed);
+      pos.addScaledVector(vel, dt);
+      pos.y = Math.max(pos.y, groundAt(pos.x, pos.z) + 0.1, SWIM_Y);
+      player.onGround = false;
+      swimming = false;
+    } else {
+      swimming = ground < SEA_LEVEL - SWIM_DEPTH && pos.y < SWIM_Y + 0.35;
+      if (swimming) {
+        if (crawling) setCrawling(false);
+        vel.set(mx * SWIM_SPEED, 0, mz * SWIM_SPEED);
+        pos.y += (SWIM_Y - pos.y) * Math.min(1, 6 * dt);
+        moveBody(player, dt, blocks, false);
+      } else {
+        let speed = crawling ? CRAWL_SPEED : input.run ? RUN_SPEED : WALK_SPEED;
+        if (ground < SEA_LEVEL - 0.4) speed *= 0.6;
+        vel.x = mx * speed;
+        vel.z = mz * speed;
+        if (input.jump && player.onGround && !crawling) {
+          vel.y = JUMP_SPEED;
+          player.onGround = false;
+          sfx.jump();
+        }
+        moveBody(player, dt, blocks, true);
+      }
+      terrain.collide(pos, player.hw);
+    }
+    if (!before.equals(pos)) dirty = true;
+    airTime = player.onGround || swimming ? 0 : airTime + dt;
+
+    // ---- pose and animation ----
+    avatar.position.copy(pos);
+    let diff = facing - avatar.rotation.y;
     diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    camYaw += diff * Math.min(1, 3 * dt);
+    avatar.rotation.y += diff * Math.min(1, 12 * dt);
+
+    let wantTilt = 0;
+    let wantLift = 0;
+    if (flying) {
+      play('Jump_Idle');
+      wantTilt = moving ? 1.05 : 0;
+    } else if (swimming) {
+      // Paddle along the surface when moving, tread water when still.
+      play(moving ? 'Crawling' : 'Jump_Idle', moving ? 1.3 : 0.6);
+      wantLift = moving ? 1.05 : 0;
+    } else if (airTime > 0.18) {
+      play('Jump_Idle');
+    } else if (crawling) {
+      play(moving ? 'Crawling' : 'Crouching');
+    } else if (moving) {
+      const fast = input.run;
+      play(fast ? 'Running_A' : 'Walking_A', fast ? 1.15 : 1.1);
+    } else {
+      play(time < cheerUntil ? 'Cheering' : 'Idle_A');
+    }
+    tiltNow += (wantTilt - tiltNow) * Math.min(1, 8 * dt);
+    liftNow += (wantLift - liftNow) * Math.min(1, 6 * dt);
+    tilt.rotation.x = tiltNow;
+    tilt.position.y = 1.1 + liftNow;
+    mixer.update(dt);
   }
-}
 
-const camOffset = new THREE.Vector3();
-const camProbe = new THREE.Vector3();
-const camWant = new THREE.Vector3();
+  let carPitch = 0;
+  let carRoll = 0;
 
-function updateCamera(dt: number, who: THREE.Vector3): void {
-  camWant.copy(who).setY(who.y + (driving ? 1.9 : 1.5));
-  camTarget.lerp(camWant, Math.min(1, 12 * dt));
+  function updateCar(dt: number, controlled: boolean): void {
+    if (controlled) {
+      if (Math.abs(input.moveZ) > 0.1) carSpeed += input.moveZ * 18 * dt;
+      else carSpeed *= Math.max(0, 1 - 2.2 * dt);
+      carSpeed = Math.min(CAR_MAX, Math.max(-7, carSpeed));
+      carHeading -= input.moveX * 2 * dt * Math.min(1, Math.max(-1, carSpeed / 5));
+      if (input.jump && !wasJump) sfx.honk();
+    } else {
+      carSpeed = 0;
+    }
 
-  const want = driving ? camDist + 2 : camDist;
-  camOffset.set(
-    Math.sin(camYaw) * Math.cos(camPitch),
-    Math.sin(camPitch),
-    Math.cos(camYaw) * Math.cos(camPitch),
-  );
-  // Pull the camera in when a block is between it and the player.
-  let clear = want;
-  for (let s = 0.6; s <= want; s += 0.25) {
-    camProbe.copy(camTarget).addScaledVector(camOffset, s);
-    if (world.get(Math.floor(camProbe.x), Math.floor(camProbe.y), Math.floor(camProbe.z)) !== AIR) {
-      clear = Math.max(0.7, s - 0.35);
-      break;
+    const fx = Math.sin(carHeading);
+    const fz = Math.cos(carHeading);
+    if (carSpeed !== 0) {
+      const nx = carPos.x + fx * carSpeed * dt;
+      const nz = carPos.z + fz * carSpeed * dt;
+      const g = groundAt(nx, nz);
+      // Cars do not drive into deep water or through things built in the way.
+      if (g < SEA_LEVEL - 0.9 || blocks.collides(nx, g + 0.7, nz, 1.4, 2)) {
+        carSpeed *= -0.25;
+      } else {
+        carPos.x = nx;
+        carPos.z = nz;
+        dirty = true;
+      }
+      if (terrain.collide(carPos, 1.7)) carSpeed *= 1 - Math.min(1, 3 * dt);
+    }
+    const g = groundAt(carPos.x, carPos.z);
+    carPos.y += (g - carPos.y) * Math.min(1, 14 * dt);
+
+    // Lean with the slope by comparing the ground under the bumpers and the doors.
+    const front = groundAt(carPos.x + fx * 2.2, carPos.z + fz * 2.2);
+    const back = groundAt(carPos.x - fx * 2.2, carPos.z - fz * 2.2);
+    const left = groundAt(carPos.x + fz * 1.3, carPos.z - fx * 1.3);
+    const right = groundAt(carPos.x - fz * 1.3, carPos.z + fx * 1.3);
+    carPitch += (-Math.atan2(front - back, 4.4) - carPitch) * Math.min(1, 8 * dt);
+    carRoll += (Math.atan2(left - right, 2.6) - carRoll) * Math.min(1, 8 * dt);
+
+    car.position.copy(carPos).setY(carPos.y + carLift);
+    car.rotation.set(carPitch, carHeading, carRoll);
+    for (const w of wheels) w.rotation.x += (carSpeed * dt) / (0.3 * CAR_SCALE);
+
+    if (controlled) {
+      // Keep the camera behind the car so "up" on the stick always means "go".
+      let diff = carHeading + Math.PI - camYaw;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      camYaw += diff * Math.min(1, 3 * dt);
     }
   }
-  camDistNow = clear < camDistNow ? clear : camDistNow + (clear - camDistNow) * Math.min(1, 5 * dt);
-  camera.position.copy(camTarget).addScaledVector(camOffset, camDistNow);
-  camera.lookAt(camTarget);
+
+  const camOffset = new THREE.Vector3();
+  const camWant = new THREE.Vector3();
+
+  function updateCamera(dt: number, who: THREE.Vector3): void {
+    camWant.copy(who).setY(who.y + (driving ? 2.6 : crawling ? 1 : 1.9));
+    camTarget.lerp(camWant, Math.min(1, 12 * dt));
+    const dist = driving ? camDist + 4 : camDist;
+    camOffset.set(
+      Math.sin(camYaw) * Math.cos(camPitch),
+      Math.sin(camPitch),
+      Math.cos(camYaw) * Math.cos(camPitch),
+    );
+    camera.position.copy(camTarget).addScaledVector(camOffset, dist);
+    // Never let the camera sink into a hillside or under the sea.
+    const floor = Math.max(groundAt(camera.position.x, camera.position.z), SEA_LEVEL) + 0.6;
+    if (camera.position.y < floor) camera.position.y = floor;
+    camera.lookAt(camTarget);
+  }
+
+  function updateBolt(dt: number, time: number, who: THREE.Vector3): void {
+    // Hover at the player's side as seen by the camera, so Bolt never blocks the view.
+    const side = driving ? 3.4 : 2.3;
+    boltWant.set(
+      who.x + Math.cos(camYaw) * side - Math.sin(camYaw) * 0.8,
+      who.y + 1.5 + Math.sin(time * 2.4) * 0.15,
+      who.z - Math.sin(camYaw) * side - Math.cos(camYaw) * 0.8,
+    );
+    if (robot.position.distanceTo(boltWant) > 80) robot.position.copy(boltWant);
+    robot.position.lerp(boltWant, Math.min(1, 4 * dt));
+    robot.rotation.y = Math.atan2(who.x - robot.position.x, who.z - robot.position.z);
+
+    boltHead.copy(robot.position).setY(robot.position.y + 1.7).project(camera);
+    const show = time < bubbleUntil && boltHead.z < 1;
+    bubble.hidden = !show;
+    if (show) {
+      bubble.textContent = `⭐ ${collected.size}`;
+      bubble.style.left = `${(boltHead.x * 0.5 + 0.5) * window.innerWidth}px`;
+      bubble.style.top = `${(-boltHead.y * 0.5 + 0.5) * window.innerHeight}px`;
+    }
+  }
+
+  let actionShown = '';
+
+  // Test hook: add ?debug to the address to inspect or move the player from the console.
+  if (new URLSearchParams(location.search).has('debug')) {
+    Object.assign(window, {
+      ob: {
+        player,
+        carPos,
+        groundAt,
+        state: () => ({ flying, crawling, swimming, driving, anim: current, stars: collected.size, blocks: blocks.map.size }),
+      },
+    });
+  }
+
+  return {
+    frame(dt, time) {
+      if (started) {
+        if (driving) {
+          updateCar(dt, true);
+          player.pos.copy(carPos);
+        } else {
+          updatePlayer(dt, time);
+          updateCar(dt, false);
+        }
+        wasJump = input.jump;
+
+        const who = driving ? carPos : player.pos;
+        const found = terrain.collect(who, driving ? 3.5 : 2.2);
+        if (found > 0) {
+          starCountEl.textContent = String(collected.size);
+          starsEl.classList.remove('pop');
+          void starsEl.offsetWidth;
+          starsEl.classList.add('pop');
+          sfx.star();
+          // Counting out loud as the stars add up.
+          speak(String(collected.size));
+          cheerUntil = time + 2.2;
+          bubbleUntil = time + 3;
+          dirty = true;
+        }
+
+        const icon = driving ? '🚶' : nearCar() ? '🚗' : '';
+        if (icon !== actionShown) {
+          actionShown = icon;
+          actionEl.hidden = icon === '';
+          actionEl.textContent = icon;
+          jumpEl.textContent = driving ? '📣' : '⬆️';
+          crawlEl.hidden = flyEl.hidden = driving;
+        }
+      } else {
+        // Slow orbit behind the start screen.
+        camYaw += dt * 0.12;
+        avatar.position.copy(player.pos);
+        mixer.update(dt);
+        updateCar(dt, false);
+      }
+
+      const who = driving ? carPos : player.pos;
+      terrain.update(who.x, who.z, 2);
+      animals.update(dt, who);
+      for (const s of terrain.stars) {
+        const mesh = s.group.children[0];
+        mesh.rotation.y = time * 2;
+        mesh.position.y = Math.sin(time * 3 + s.pos.x) * 0.25;
+      }
+      updateCamera(dt, who);
+      updateBolt(dt, time, who);
+
+      // Sky, sea, clouds and the sun's shadow all travel with the player.
+      sky.position.copy(camera.position);
+      water.position.x = who.x;
+      water.position.z = who.z;
+      sun.target.position.copy(who);
+      sun.position.copy(who).add(SUN_OFFSET);
+      for (const c of clouds.children) {
+        c.position.x += dt * 1.5;
+        if (c.position.x - who.x > 320) c.position.x -= 640;
+        if (c.position.x - who.x < -320) c.position.x += 640;
+        if (c.position.z - who.z > 320) c.position.z -= 640;
+        if (c.position.z - who.z < -320) c.position.z += 640;
+      }
+    },
+  };
 }
 
 function resize(): void {
@@ -493,60 +687,28 @@ window.addEventListener('resize', resize);
 resize();
 
 let last = performance.now();
-let actionShown = '';
-
-function frame(now: number): void {
+function loop(now: number): void {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
-  const time = now / 1000;
   input.update();
-
-  if (started) {
-    if (driving) {
-      updateCar(dt, true);
-      player.pos.copy(carBody.pos);
-    } else {
-      updatePlayer(dt);
-      updateCar(dt, false);
-    }
-    wasJump = input.jump;
-
-    const who = driving ? carBody.pos : player.pos;
-    for (let i = stars.length - 1; i >= 0; i--) {
-      const s = stars[i];
-      if (Math.hypot(s.pos.x - who.x, s.pos.z - who.z) < 1.4 && Math.abs(s.pos.y - who.y) < 2.5) {
-        collectStar(i);
-      }
-    }
-
-    const icon = driving ? '🚶' : nearCar() ? '🚗' : '';
-    if (icon !== actionShown) {
-      actionShown = icon;
-      actionEl.hidden = icon === '';
-      actionEl.textContent = icon;
-      jumpEl.textContent = driving ? '📣' : '⬆️';
-    }
-  } else {
-    // Slow orbit behind the start screen.
-    camYaw += dt * 0.15;
-    avatar.group.position.copy(player.pos);
-    car.group.position.copy(carBody.pos);
-    car.group.rotation.y = carHeading;
+  if (game) {
+    game.frame(dt, now / 1000);
+    renderer.render(scene, camera);
   }
-
-  for (const s of stars) {
-    s.mesh.rotation.y = time * 2;
-    s.mesh.position.y = s.pos.y + 1.1 + Math.sin(time * 3 + s.index) * 0.15;
-  }
-  for (const c of clouds.children) {
-    c.position.x += dt * 1.2;
-    if (c.position.x > 190) c.position.x = -90;
-  }
-
-  const who = driving ? carBody.pos : player.pos;
-  updateCamera(dt, who);
-  updateBolt(time, who);
-  renderer.render(scene, camera);
-  requestAnimationFrame(frame);
+  requestAnimationFrame(loop);
 }
-requestAnimationFrame(frame);
+requestAnimationFrame(loop);
+
+loadAssets((fraction) => {
+  $('loading-bar').style.width = `${Math.round(fraction * 100)}%`;
+})
+  .then((assets) => {
+    game = createGame(assets);
+    $('loading').hidden = true;
+    $('play').hidden = false;
+    if (new URLSearchParams(location.search).has('autostart')) start();
+  })
+  .catch((err: unknown) => {
+    console.error(err);
+    $('loading').textContent = '⚠️';
+  });

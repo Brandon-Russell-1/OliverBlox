@@ -18,7 +18,7 @@
     <canvas id="game"></canvas>
 
     <div id="hud" hidden>
-      <div id="stars"><span class="star-icon">⭐</span><span id="star-count">0/10</span></div>
+      <div id="stars"><span class="star-icon">⭐</span><span id="star-count">0</span></div>
       <button id="gear" aria-label="Grown-ups: hold to reset the world">⚙️</button>
       <div id="bubble" hidden></div>
 
@@ -26,13 +26,16 @@
 
       <div id="joystick"><div id="knob"></div></div>
       <button id="action" class="round" hidden>🚗</button>
+      <button id="fly" class="round small" aria-label="Fly">🦸</button>
+      <button id="crawl" class="round small" aria-label="Crawl">🐛</button>
       <button id="jump" class="round">⬆️</button>
     </div>
 
     <div id="start">
       <img src="/icon.svg" alt="" />
       <h1>OliverBlox</h1>
-      <button id="play" aria-label="Play">▶</button>
+      <button id="play" aria-label="Play" hidden>▶</button>
+      <div id="loading"><div id="loading-bar"></div></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
