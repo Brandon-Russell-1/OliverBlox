@@ -9,6 +9,7 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 | | Tablet | PC |
 | --- | --- | --- |
 | Pick a hero | Arrows on the start screen | Arrows on the start screen |
+| Pick a name | Type it in the box on the start screen | Same |
 | Move | Left stick | WASD or arrow keys |
 | Run | Push the stick all the way | Hold Shift |
 | Jump | Arrow button | Space |
@@ -28,6 +29,7 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Garage unlocks:** the car and the rowing boat are free; the rest are bought once with coins.
 - **Program Bolt:** the puzzle button opens a strip of picture commands (forward, turn left, turn right, place a block). Line some up, pick how many times to repeat, press play, and Bolt carries them out. It builds with whichever colour is selected.
 - **Play together:** the two-people button asks for a room name. Everyone who types the same name is in the same world: they see each other, build together and fight the same skeletons, and everyone gets the star and coin when one is beaten. It needs the AI helper set up (see below), because it runs through your own Cloudflare Worker.
+- **Names:** each player types their own name on the start screen (letters only, up to 12). Friends see it under their face, and the AI characters use it.
 - **Finding friends:** each player gets an animal face. It floats over their hero at the same size however far away they are, and shows on the map, pinned to the rim when they are off it. The room panel shows your own face first, then your friends'.
 - **Emoji messages:** the smiley button opens eight emoji. Tapping one shows it over your hero for everyone in the room. Pictures from that list are the only thing players can send each other.
 - **Townsfolk:** Gus the guard, Robin the ranger and Tess the tinker stroll around each village and like a chat.

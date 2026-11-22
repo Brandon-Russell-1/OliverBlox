@@ -760,6 +760,27 @@ body:not(.touch) #action {
   height: 1.2em;
 }
 
+#start-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2vh;
+}
+
+#player-name {
+  width: min(70vw, 280px);
+  padding: 10px 16px;
+  border: 4px solid #fff;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1c2a6b;
+  font: 800 26px 'Trebuchet MS', 'Segoe UI', sans-serif;
+  text-align: center;
+  touch-action: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 #picker {
   position: absolute;
   top: 50%;

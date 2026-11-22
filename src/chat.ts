@@ -1,4 +1,5 @@
 import { speak, sfx, listVoices, getVoiceName, setVoiceName, type VoiceStyle } from './audio';
+import { getPlayerName } from './profile';
 
 /** A character Oliver can talk to. The real personality lives on the server; these are the offline lines. */
 export interface Persona {
@@ -232,7 +233,7 @@ export class Chat {
     if (!persona || this.busy) return;
     this.busy = true;
     this.text.textContent = '💭';
-    log(`Oliver to ${persona.name}: ${message}`);
+    log(`${getPlayerName() || 'Player'} to ${persona.name}: ${message}`);
 
     const history = this.histories.get(persona.id) ?? [];
     history.push({ role: 'user', content: message.slice(0, 300) });
@@ -275,7 +276,7 @@ export function setupParentPanel(onErase: () => void): () => void {
   voice.addEventListener('change', () => setVoiceName(voice.value));
   $('voice-test').addEventListener('click', () => {
     setVoiceName(voice.value);
-    speak('Hi Oliver! I found three stars. Can you find more?');
+    speak(`Hi ${getPlayerName() || 'there'}! I found three stars. Can you find more?`);
   });
   $('parent-save').addEventListener('click', () => {
     setAiSettings({ url: url.value, code: code.value });

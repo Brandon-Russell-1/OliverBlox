@@ -14,6 +14,7 @@ import { Quests, QUEST_ICONS, type QuestSave } from './quests';
 import { Actor } from './actor';
 import { Enemies, type EnemyContext, type Target } from './combat';
 import { emojiTexture, faceFor, makeMarker, EMOTES } from './emoji';
+import { getPlayerName, setPlayerName } from './profile';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio } from './audio';
 import { makeRobot, makeClouds } from './models';
@@ -367,6 +368,7 @@ attackEl.addEventListener('pointerdown', (e) => {
 
 const chat = new Chat();
 chat.context = (personaId) => ({
+  name: getPlayerName(),
   stars: starTotal(),
   coins,
   hearts,
@@ -382,13 +384,22 @@ chat.context = (personaId) => ({
   quests: quests.list(),
 });
 
+// Each player picks their own name on the start screen; it is kept on this device.
+const nameInput = $<HTMLInputElement>('player-name');
+nameInput.value = getPlayerName();
+nameInput.addEventListener('change', () => {
+  setPlayerName(nameInput.value);
+  nameInput.value = getPlayerName();
+});
+
 function start(): void {
   if (started || !game) return;
+  setPlayerName(nameInput.value);
   started = true;
   unlockAudio();
   $('start').hidden = true;
   $('hud').hidden = false;
-  speak('Hi! I am Bolt! Let us go exploring!');
+  speak(`Hi${getPlayerName() ? ` ${getPlayerName()}` : ''}! I am Bolt! Let us go exploring!`);
   bubbleUntil = performance.now() / 1000 + 5;
 }
 $('play').addEventListener('click', start);
@@ -1553,7 +1564,7 @@ async function createGame(assets: Assets): Promise<Game> {
         if (net.connected && netTimer <= 0) {
           netTimer = 0.1;
           // Show who is here: our own face, then our friends'.
-          const here = `✅ ${faceFor(selfId)} ${peers.faces()}`;
+          const here = `✅ ${faceFor(selfId)} ${getPlayerName()} ${peers.faces()}`.replace(/ +/g, ' ');
           if (roomStatus.textContent !== here) roomStatus.textContent = here;
           net.send({
             t: 's',
@@ -1564,6 +1575,7 @@ async function createGame(assets: Assets): Promise<Game> {
             a: hero?.playing ?? 'Idle_A',
             h: CHARACTERS[heroIndex],
             g: targetable ? 1 : 0,
+            n: getPlayerName(),
           });
         }
         nearAnimal = animals.nearest(player.pos, 4.5);

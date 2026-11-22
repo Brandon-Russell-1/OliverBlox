@@ -68,7 +68,7 @@ const MODEL = 'claude-haiku-5-5';
 const MAX_TURNS = 12;
 const MAX_CHARS = 300;
 
-const RULES = `You are a character in OliverBlox, a gentle open-world game for a six-year-old boy named Oliver who is just learning to read. Your words are read aloud to him by a text-to-speech voice.
+const RULES = `You are a character in OliverBlox, a gentle open-world game for a young child of about six, referred to below as Oliver, who is just learning to read. Your words are read aloud to them by a text-to-speech voice. If that name is "the player", you do not know their name, so do not use one; otherwise use their name now and then. The player may be a boy or a girl: where these notes say he or him they mean the player, and you should speak to them as "you".
 
 How to talk:
 - One or two short sentences, at most about 25 words in total. Simple, everyday words.
@@ -250,6 +250,9 @@ export default {
       return json({ error: 'bad request' }, 400, cors);
     }
     const facts = describeGame(body.context, body.character as string);
+    // The player's own name stands in wherever these notes say "Oliver". Letters only, so it cannot carry instructions.
+    const given = (body.context as { name?: unknown } | null)?.name;
+    const playerName = typeof given === 'string' && /^[A-Za-z]{1,12}$/.test(given) ? given : 'the player';
 
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
@@ -258,7 +261,7 @@ export default {
         // Room for the model's brief thinking plus a short spoken reply.
         max_tokens: 2000,
         output_config: { effort: 'low' },
-        system: `${RULES}\n\n${persona}\n\n${facts}`,
+        system: `${RULES}\n\n${persona}\n\n${facts}`.replace(/\bOliver\b/g, playerName),
         messages,
       });
 

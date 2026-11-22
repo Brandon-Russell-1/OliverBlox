@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Actor } from './actor';
 import { loadModel, CHARACTERS } from './assets';
-import { emojiTexture, faceFor, makeMarker } from './emoji';
+import { emojiTexture, faceFor, makeMarker, makeLabel, setLabel } from './emoji';
+import { cleanName } from './profile';
 import type { EnemySnapshot, Target } from './combat';
 
 /** What each player tells the others about themselves, several times a second. */
@@ -17,6 +18,8 @@ export interface PlayerState {
   h: string;
   /** 1 if skeletons may go for this player (not flying, driving, indoors or chatting). */
   g: number;
+  /** The name they picked, if any. */
+  n: string;
 }
 
 export type NetMessage =
@@ -86,6 +89,8 @@ interface Peer {
   hero: string;
   face: string;
   marker: THREE.Sprite;
+  label: THREE.Sprite;
+  name: string;
   /** While an emoji they sent is showing instead of their face. */
   emoteTime: number;
 }
@@ -111,7 +116,7 @@ export class Peers {
 
   /** The friends' faces in a row, for the room panel. */
   faces(): string {
-    return [...this.map.values()].map((p) => p.face).join('');
+    return [...this.map.values()].map((p) => (p.name ? `${p.face} ${p.name}` : p.face)).join(' ');
   }
 
   /** Where skeletons can find each friend. */
@@ -130,13 +135,19 @@ export class Peers {
       group.position.set(state.x, state.y, state.z);
       const face = faceFor(id);
       const marker = makeMarker(face);
-      group.add(marker);
+      const label = makeLabel();
+      group.add(marker, label);
       this.scene.add(group);
-      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, emoteTime: 0 };
+      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', emoteTime: 0 };
       this.map.set(id, peer);
     }
     peer.state = state;
     peer.pos.set(state.x, state.y, state.z);
+    const name = cleanName(state.n);
+    if (name !== peer.name) {
+      peer.name = name;
+      setLabel(peer.label, name);
+    }
     // Only names from the known list are ever turned into a download.
     const hero = CHARACTERS.includes(state.h) ? state.h : 'Rogue';
     if (hero !== peer.hero) {
