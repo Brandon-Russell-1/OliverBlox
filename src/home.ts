@@ -7,23 +7,26 @@ import { loadModel } from './assets';
  */
 export const ROOM = { x: 0, y: 600, z: 0, halfX: 8, halfZ: 6, height: 7 };
 
-const FURNITURE: [string, number, number, number][] = [
-  // model, x, z, turn (in quarter turns)
-  ['rug_rectangle_A', 0, 0, 0],
-  ['bed_single_A', -6.4, -3.8, 0],
-  ['cabinet_medium_decorated', -3.6, -5.2, 0],
-  ['shelf_B_large_decorated', 1.5, -5.6, 0],
-  ['table_medium', 4.6, 2.2, 0],
-  ['chair_A_wood', 4.6, 4.2, 2],
-  ['chair_A_wood', 6.6, 2.2, 3],
-  ['couch_pillows', -5.2, 4.4, 2],
-  ['lamp_standing', 6.8, -5, 0],
-];
+/** What each piece is, where it stands, and how it is turned. The rug and bed come with the house. */
+const FURNITURE: Record<string, [string, number, number, number][]> = {
+  rug: [['rug_rectangle_A', 0, 0, 0]],
+  bed: [['bed_single_A', -6.4, -3.8, 0]],
+  cabinet: [['cabinet_medium_decorated', -3.6, -5.2, 0]],
+  shelf: [['shelf_B_large_decorated', 1.5, -5.6, 0]],
+  table: [
+    ['table_medium', 4.6, 2.2, 0],
+    ['chair_A_wood', 4.6, 4.2, 2],
+    ['chair_A_wood', 6.6, 2.2, 3],
+  ],
+  couch: [['couch_pillows', -5.2, 4.4, 2]],
+  lamp: [['lamp_standing', 6.8, -5, 0]],
+};
+const INCLUDED = ['rug', 'bed'];
 const SCALE = 1.25;
 
 export class Home {
   private readonly group = new THREE.Group();
-  private furnished = false;
+  private readonly placed = new Set<string>();
 
   constructor(scene: THREE.Scene) {
     const { halfX, halfZ, height } = ROOM;
@@ -51,19 +54,22 @@ export class Home {
     scene.add(this.group);
   }
 
-  /** Show or hide the room; the furniture is downloaded the first time it is needed. */
-  show(on: boolean): void {
+  /** Show or hide the room, with whatever furniture has been bought. Models download when first needed. */
+  show(on: boolean, owned: Set<string>): void {
     this.group.visible = on;
-    if (!on || this.furnished) return;
-    this.furnished = true;
-    for (const [name, x, z, turn] of FURNITURE) {
-      void loadModel(`home/${name}.gltf`).then((gltf) => {
-        const item = gltf.scene.clone(true);
-        item.position.set(x, 0, z);
-        item.rotation.y = (turn * Math.PI) / 2;
-        item.scale.setScalar(SCALE);
-        this.group.add(item);
-      });
+    if (!on) return;
+    for (const key of [...INCLUDED, ...owned]) {
+      if (this.placed.has(key) || !FURNITURE[key]) continue;
+      this.placed.add(key);
+      for (const [name, x, z, turn] of FURNITURE[key]) {
+        void loadModel(`home/${name}.gltf`).then((gltf) => {
+          const item = gltf.scene.clone(true);
+          item.position.set(x, 0, z);
+          item.rotation.y = (turn * Math.PI) / 2;
+          item.scale.setScalar(SCALE);
+          this.group.add(item);
+        });
+      }
     }
   }
 

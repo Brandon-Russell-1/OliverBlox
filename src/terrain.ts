@@ -41,11 +41,13 @@ export interface Village {
   /** Stable name for this place, used to remember which forts have been won. */
   id: string;
   /** A friendly village, or a fort held by skeletons. */
-  kind: 'village' | 'fort';
+  kind: 'village' | 'fort' | 'maze';
   x: number;
   z: number;
   h: number;
   buildings: Building[];
+  /** For mazes: where each stretch of wall stands. */
+  walls: { x: number; z: number; rot: number }[];
 }
 
 /** The world is divided into big squares; each may hold one village. */
@@ -62,13 +64,14 @@ function villageIn(rx: number, rz: number): Village | null {
   let village: Village | null = null;
   const home = rx === 0 && rz === 0;
   const firstFort = rx === -1 && rz === 0;
+  const firstMaze = rx === 0 && rz === -1;
   // The first village and the first fort are always a short walk from where the game starts.
-  const x = home ? 80 : firstFort ? -150 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
-  const z = home ? 75 : firstFort ? 40 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
+  const x = home ? 80 : firstFort ? -150 : firstMaze ? 70 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
+  const z = home ? 75 : firstFort ? 40 : firstMaze ? -150 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
   const h = baseHeight(x, z);
   const buildable = h > 3 && h < 22;
   const roll = hash2(rx, rz, 71);
-  const kind = home ? 'village' : firstFort ? 'fort' : !buildable ? null : roll < 0.6 ? 'village' : roll < 0.9 ? 'fort' : null;
+  const kind = home ? 'village' : firstFort ? 'fort' : firstMaze ? 'maze' : !buildable ? null : roll < 0.5 ? 'village' : roll < 0.75 ? 'fort' : 'maze';
   if (kind) {
     // Villages use the blue buildings and forts the red ones; the first of each set stands in the middle.
     const first = kind === 'fort' ? FORT_FIRST : 0;
@@ -84,7 +87,15 @@ function villageIn(rx: number, rz: number): Village | null {
       // Every building faces the middle.
       buildings.push({ def, x: bx, z: bz, rot: Math.atan2(x - bx, z - bz), scale: BUILDING_SCALE });
     }
-    village = { id: key, kind, x, z, h: Math.max(h, 3), buildings };
+    village = {
+      id: key,
+      kind,
+      x,
+      z,
+      h: Math.max(h, 3),
+      buildings: kind === 'maze' ? [] : buildings,
+      walls: kind === 'maze' ? mazeWalls(x, z, rx * 7919 + rz * 104729 + 17) : [],
+    };
   }
   villages.set(key, village);
   return village;
@@ -132,6 +143,64 @@ function rawHeight(x: number, z: number): number {
   const k = 1 - smoothstep(VILLAGE_RADIUS - 8, VILLAGE_RADIUS + 28, Math.hypot(v.x - x, v.z - z));
   return h * (1 - k) + v.h * k;
 }
+
+/** Mazes are a square of cells this many across, each this many metres wide. */
+const MAZE_CELLS = 5;
+const MAZE_CELL = 8;
+
+/**
+ * Lay out a maze: start with every wall up, then knock walls down along a wandering path
+ * that visits every cell, so there is always exactly one way to the middle.
+ */
+function mazeWalls(cx: number, cz: number, seed: number): { x: number; z: number; rot: number }[] {
+  const n = MAZE_CELLS;
+  const rng = mulberry32(seed);
+  // open[`h,i,j`] is the gap in the wall on the low-z side of cell (i, j); `v` likewise on the low-x side.
+  const open = new Set<string>();
+  const seen = new Set<string>(['0,0']);
+  const stack: [number, number][] = [[0, 0]];
+  while (stack.length > 0) {
+    const [i, j] = stack[stack.length - 1];
+    const next = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+      .map(([di, dj]) => [i + di, j + dj])
+      .filter(([a, b]) => a >= 0 && b >= 0 && a < n && b < n && !seen.has(`${a},${b}`));
+    if (next.length === 0) {
+      stack.pop();
+      continue;
+    }
+    const [a, b] = next[Math.floor(rng() * next.length)];
+    open.add(a !== i ? `v,${Math.max(a, i)},${j}` : `h,${i},${Math.max(b, j)}`);
+    seen.add(`${a},${b}`);
+    stack.push([a, b]);
+  }
+  // The way in is the middle of the +z side.
+  open.add(`h,${Math.floor(n / 2)},${n}`);
+
+  const x0 = cx - (n * MAZE_CELL) / 2;
+  const z0 = cz - (n * MAZE_CELL) / 2;
+  const walls: { x: number; z: number; rot: number }[] = [];
+  for (let j = 0; j <= n; j++) {
+    for (let i = 0; i < n; i++) {
+      if (!open.has(`h,${i},${j}`)) walls.push({ x: x0 + (i + 0.5) * MAZE_CELL, z: z0 + j * MAZE_CELL, rot: 0 });
+      if (!open.has(`v,${j},${i}`)) walls.push({ x: x0 + j * MAZE_CELL, z: z0 + (i + 0.5) * MAZE_CELL, rot: Math.PI / 2 });
+    }
+  }
+  return walls;
+}
+
+/** One stretch of maze wall: a plain stone slab. */
+const WALL: PropDef = (() => {
+  const g = new THREE.BoxGeometry(MAZE_CELL + 1.2, 5, 1.2).translate(0, 2.5, 0).toNonIndexed();
+  return {
+    pos: g.attributes.position.array as Float32Array,
+    norm: g.attributes.normal.array as Float32Array,
+    uv: g.attributes.uv.array as Float32Array,
+    count: g.attributes.position.count,
+    radius: MAZE_CELL / 2,
+    height: 5,
+  };
+})();
+const WALL_MATERIAL = new THREE.MeshLambertMaterial({ color: 0x9ea1b0 });
 
 const heightCache = new Map<number, number>();
 
@@ -205,6 +274,7 @@ interface Chunk {
   ground: THREE.Mesh;
   props: THREE.Mesh | null;
   buildings: THREE.Mesh | null;
+  walls: THREE.Mesh | null;
   colliders: Collider[];
   star: Star | null;
   chest: Star | null;
@@ -384,6 +454,17 @@ export class Terrain {
       colliders.push({ x: b.x, z: b.z, r: def.radius * b.scale * 0.8 });
     }
 
+    // ---- maze walls that stand in this chunk ----
+    const walled: Placement[] = [];
+    for (const w of village?.walls ?? []) {
+      if (w.x < ox || w.x >= ox + CHUNK || w.z < oz || w.z >= oz + CHUNK) continue;
+      walled.push({ def: WALL, x: w.x, y: groundAt(w.x, w.z) - 0.4, z: w.z, scale: 1, rot: w.rot });
+      // A row of small circles along the wall stops anyone walking through it.
+      for (let t = -4; t <= 4.01; t += 1.6) {
+        colliders.push({ x: w.x + Math.cos(w.rot) * t, z: w.z - Math.sin(w.rot) * t, r: 0.85 });
+      }
+    }
+
     // ---- star ----
     let star: Star | null = null;
     const id = `${cx},${cz}`;
@@ -433,6 +514,7 @@ export class Terrain {
       ground,
       props: this.bake(placements, this.props.material),
       buildings: this.bake(built, this.props.buildingMaterial),
+      walls: this.bake(walled, WALL_MATERIAL),
       colliders,
       star,
       chest,
@@ -481,7 +563,7 @@ export class Terrain {
   private unload(c: Chunk): void {
     this.scene.remove(c.ground);
     c.ground.geometry.dispose();
-    for (const mesh of [c.props, c.buildings]) {
+    for (const mesh of [c.props, c.buildings, c.walls]) {
       if (!mesh) continue;
       this.scene.remove(mesh);
       mesh.geometry.dispose();

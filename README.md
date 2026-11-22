@@ -41,6 +41,14 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Shared with friends:** stars and treasure chests now vanish for everyone when one player takes them, and everyone gets the prize. Friends' building counts toward building jobs. Friends are shown in their car or boat, with their pet beside them.
 - **Grown-up controls:** in the grown-ups panel, switch music or skeletons off, see minutes played today, and set a daily limit. When the limit is reached a "time for a break" screen covers the game until a grown-up raises it.
 - **Works offline:** after the first visit the game is kept on the device, so it loads quickly and opens without internet (playing alone; chat and playing together need a connection).
+- **Mazes:** the 🏛️ on the map is a stone maze with a big treasure chest in the middle (20 coins and 3 stars). The way in is on one side. The first is north of the start.
+- **Ring race:** every village has a 🏁 flag. Tapping the button there starts a race through eight rings round the village, on foot or in a car, with 90 seconds on the clock. Faster pays more coins.
+- **Fishing:** stand on a shore facing the water and a 🎣 button appears. Cast, wait for the float to dip (the button turns to ❗), then tap to reel in. Each fish is 2 coins.
+- **His house:** every village house leads to his own room. It starts with a bed and a rug; a lamp, shelf, cabinet, couch and table are sold at the shop and appear next time he goes in.
+- **Hats:** the shop sells a party hat, a top hat and a crown. Tapping one he owns puts it on or takes it off.
+- **Letter jobs:** Robin the ranger asks him to find a letter. Three big letters stand around the village; touching the right one finishes the job, and touching a wrong one names it. The jobs work through the alphabet.
+- **Riding together:** stand next to a friend who is driving and tap the 🚙 button to ride along; tap again to hop out.
+- **Sound effects:** recorded sounds for building, fighting, coins and doors, from Kenney's packs.
 - **Map:** the round map in the top right turns with the view, so up on the map is straight ahead. The 🏠 on its rim points to the nearest village. Tap the map to make it big.
 - **Quests:** villagers with a ❗ over their head have a job (find stars, bonk skeletons, build with blocks, befriend an animal). Chips on the left show progress; go back when they show 🎁 to collect coins.
 - **Shop:** the villager with the 🛒 sells an axe, a great sword, extra hearts and running shoes for coins. Skeletons drop a coin each too.
@@ -72,8 +80,9 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 4. Forts, treasure, house interiors, garage unlocks, program Bolt, playing together (done)
 5. Shared skeletons, friend markers, emoji, townsfolk (done)
 6. Day and night, music, Bolt puzzles, colour jobs, shared stars and treasure, grown-up controls, offline (done)
-7. Dungeons and other new places, village mini-games, a home to decorate, outfits, riding together
+7. Mazes, ring race, fishing, a house to furnish, hats, letter jobs, riding together, recorded sounds (done)
+8. Underground dungeons, more mini-games, outfits beyond hats, a smaller download
 
 ## Credits
 
-3D models are CC0 (public domain): heroes, skeletons, weapons, animations, forest scenery and village and fort buildings, furniture and treasure chests by [Kay Lousberg](https://www.kaylousberg.com), vehicles and animals by [Kenney](https://kenney.nl).
+3D models are CC0 (public domain): heroes, skeletons, weapons, animations, forest scenery and village and fort buildings, furniture and treasure chests by [Kay Lousberg](https://www.kaylousberg.com), vehicles, animals and sound effects by [Kenney](https://kenney.nl).

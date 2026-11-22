@@ -1,4 +1,4 @@
-export type QuestType = 'stars' | 'skeletons' | 'blocks' | 'colour' | 'pet';
+export type QuestType = 'stars' | 'skeletons' | 'blocks' | 'colour' | 'pet' | 'letter';
 
 export interface Quest {
   type: QuestType;
@@ -6,7 +6,7 @@ export interface Quest {
   have: number;
   /** Coins paid when it is handed in. */
   reward: number;
-  /** For colour jobs: which block colour counts. */
+  /** For colour jobs: which block colour counts. For letter jobs: which letter, 0 for A. */
   k?: number;
 }
 
@@ -21,12 +21,16 @@ export const QUEST_ICONS: Record<QuestType, string> = {
   skeletons: '💀',
   blocks: '🧱',
   colour: '🎨',
+  letter: '🔤',
   pet: '🐾',
 };
 
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen'];
 const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 const plural = (n: number, one: string, many: string): string => `${word(n)} ${n === 1 ? one : many}`;
+
+export const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const LETTER_WORDS = ['apple', 'ball', 'cat', 'dog', 'egg', 'fish', 'goat', 'hat', 'igloo', 'jam', 'kite', 'lion', 'moon', 'nest', 'owl', 'pig', 'queen', 'rain', 'sun', 'tree', 'umbrella', 'van', 'water', 'fox', 'yo-yo', 'zebra'];
 
 /** Names of the block colours, by block type. */
 export const COLOUR_NAMES = ['', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'white', 'brown'];
@@ -36,6 +40,7 @@ const JOBS: Record<string, QuestType[]> = {
   mage: ['stars', 'colour', 'blocks'],
   barbarian: ['skeletons'],
   druid: ['pet', 'stars'],
+  ranger: ['letter'],
 };
 
 /** Quests grow a little each time, so the counting gets harder as he goes. */
@@ -55,6 +60,9 @@ function makeQuest(persona: string, level: number): Quest {
       return { type, need: Math.min(3 + round, 8), have: 0, reward: 5 + round, k: 1 + (round % 6) };
     case 'pet':
       return { type, need: 1, have: 0, reward: 6 };
+    case 'letter':
+      // Works through the alphabet, one letter a job.
+      return { type, need: 1, have: 0, reward: 5, k: round % 26 };
   }
 }
 
@@ -70,14 +78,21 @@ function ask(q: Quest): string {
       return `I love ${COLOUR_NAMES[q.k ?? 1]}! Can you build with ${word(q.need)} ${COLOUR_NAMES[q.k ?? 1]} blocks?`;
     case 'pet':
       return 'The animals want a friend. Walk up to one and tap the paw button!';
+    case 'letter': {
+      const letter = LETTERS[q.k ?? 0];
+      return `I dropped my letters around the village! Can you find the letter ${letter}? ${letter} is for ${LETTER_WORDS[q.k ?? 0]}.`;
+    }
   }
 }
 
 function remind(q: Quest): string {
   const left = q.need - q.have;
   if (q.type === 'pet') return 'Find an animal and tap the paw button to make friends.';
+  if (q.type === 'letter') return `Look for the letter ${LETTERS[q.k ?? 0]}. ${LETTERS[q.k ?? 0]} is for ${LETTER_WORDS[q.k ?? 0]}.`;
   const colour = `${COLOUR_NAMES[q.k ?? 1]} block`;
   const thing = {
+    letter: ['letter', 'letters'],
+    pet: ['friend', 'friends'],
     stars: ['star', 'stars'],
     skeletons: ['skeleton', 'skeletons'],
     blocks: ['block', 'blocks'],

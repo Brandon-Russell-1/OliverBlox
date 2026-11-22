@@ -10,10 +10,10 @@ import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
 import { Animals, Pet, type Animal } from './animals';
-import { Quests, QUEST_ICONS, type QuestSave } from './quests';
+import { Quests, QUEST_ICONS, LETTERS, type QuestSave } from './quests';
 import { Actor } from './actor';
 import { Enemies, type EnemyContext, type Target } from './combat';
-import { emojiTexture, faceFor, makeMarker, EMOTES } from './emoji';
+import { emojiTexture, textTexture, faceFor, makeMarker, EMOTES } from './emoji';
 import { getPlayerName, setPlayerName } from './profile';
 import { music } from './music';
 import { loadSettings, saveSettings, addPlayTime, minutesToday } from './settings';
@@ -119,6 +119,12 @@ interface Save {
   forts?: string[];
   /** Vehicles unlocked in the garage. */
   vehicles?: string[];
+  /** Furniture bought for the house. */
+  furniture?: string[];
+  hats?: string[];
+  /** The hat being worn, or ''. */
+  hat?: string;
+  fish?: number;
 }
 
 function loadSave(): Save | null {
@@ -251,6 +257,10 @@ let maxHearts = 5 + extraHearts;
 const quests = new Quests(save?.quests);
 const clearedForts = new Set<string>(save?.forts ?? []);
 const ownedVehicles = new Set<string>(save?.vehicles ?? GARAGE.filter((g) => g.price === 0).map((g) => g.name));
+const furniture = new Set<string>(save?.furniture ?? []);
+const hatsOwned = new Set<string>(save?.hats ?? []);
+let hat = save?.hat ?? '';
+let fishCount = save?.fish ?? 0;
 /** While he is indoors, the spot outside the door to come back to. */
 let inside: THREE.Vector3 | null = null;
 const blocks = new Blocks(scene);
@@ -328,9 +338,10 @@ function showQuests(): void {
     ...quests.list().map((q) => {
       const chip = document.createElement('div');
       chip.className = q.have >= q.need ? 'quest done' : 'quest';
-      chip.textContent = `${QUEST_ICONS[q.type]} ${q.have}/${q.need}`;
+      // A letter job shows the letter to look for; the others show a count.
+      chip.textContent = q.type === 'letter' ? `${QUEST_ICONS.letter} ${LETTERS[q.k ?? 0]}` : `${QUEST_ICONS[q.type]} ${q.have}/${q.need}`;
       // A colour job shows its colour, so no reading is needed.
-      if (q.k) chip.style.borderLeft = `22px solid #${BLOCK_COLORS[q.k].toString(16).padStart(6, '0')}`;
+      if (q.k && q.type === 'colour') chip.style.borderLeft = `22px solid #${BLOCK_COLORS[q.k].toString(16).padStart(6, '0')}`;
       return chip;
     }),
   );
@@ -482,6 +493,10 @@ function saveNow(): void {
     quests: quests.save(),
     forts: [...clearedForts],
     vehicles: [...ownedVehicles],
+    furniture: [...furniture],
+    hats: [...hatsOwned],
+    hat,
+    fish: fishCount,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
@@ -603,6 +618,39 @@ async function createGame(assets: Assets): Promise<Game> {
     equip();
   }
   if (swordLevel > 0) void loadSword(swordLevel);
+
+  // ---- hats, made from simple shapes ----
+  function makeHat(kind: string): THREE.Object3D {
+    const group = new THREE.Group();
+    const part = (geometry: THREE.BufferGeometry, color: number, y: number): THREE.Mesh => {
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }));
+      mesh.position.y = y;
+      mesh.castShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
+    if (kind === 'party') {
+      part(new THREE.ConeGeometry(0.34, 0.85, 14), 0xff5fa2, 0.42);
+      part(new THREE.SphereGeometry(0.11, 8, 6), 0xffe066, 0.9);
+    } else if (kind === 'top') {
+      part(new THREE.CylinderGeometry(0.62, 0.62, 0.07, 18), 0x22252e, 0.03);
+      part(new THREE.CylinderGeometry(0.4, 0.4, 0.66, 18), 0x22252e, 0.36);
+      part(new THREE.CylinderGeometry(0.41, 0.41, 0.12, 18), 0xe8413c, 0.14);
+    } else {
+      part(new THREE.CylinderGeometry(0.46, 0.42, 0.3, 16, 1, true), 0xffc928, 0.15);
+      for (let i = 0; i < 6; i++) {
+        const spike = part(new THREE.ConeGeometry(0.11, 0.3, 6), 0xffc928, 0.42);
+        spike.position.x = Math.sin((i / 6) * Math.PI * 2) * 0.42;
+        spike.position.z = Math.cos((i / 6) * Math.PI * 2) * 0.42;
+      }
+    }
+    // Sits on top of the head bone.
+    group.position.y = 1.02;
+    return group;
+  }
+  function wearHat(): void {
+    hero?.wear(hat ? makeHat(hat) : null);
+  }
   onToolChange = equip;
 
   async function setHero(index: number): Promise<void> {
@@ -618,6 +666,7 @@ async function createGame(assets: Assets): Promise<Game> {
     tilt.clear();
     tilt.add(hero.root);
     equip();
+    wearHat();
   }
   await setHero(heroIndex);
   $('prev').addEventListener('click', () => void setHero(heroIndex - 1));
@@ -639,7 +688,7 @@ async function createGame(assets: Assets): Promise<Game> {
     facing = Math.PI;
     camYaw = 0;
     camTarget.copy(player.pos);
-    home.show(true);
+    home.show(true, furniture);
     mapEl.hidden = true;
     attackEl.hidden = true;
     sfx.door();
@@ -649,7 +698,7 @@ async function createGame(assets: Assets): Promise<Game> {
     player.pos.copy(inside);
     camTarget.copy(player.pos);
     inside = null;
-    home.show(false);
+    home.show(false, furniture);
     mapEl.hidden = false;
     selectTool(tool);
     sfx.door();
@@ -1006,11 +1055,51 @@ async function createGame(assets: Assets): Promise<Game> {
 
   // ---- shop: spend coins on better gear ----
   const shopEl = $('shop');
-  const SHOP = [
+  interface ShopItem {
+    icon: string;
+    price: number;
+    owned(): boolean;
+    buy(): void;
+    /** For things that can be switched once owned. */
+    use?(): void;
+  }
+  const hatItem = (icon: string, key: string, price: number): ShopItem => ({
+    icon,
+    price,
+    owned: () => hatsOwned.has(key),
+    buy: () => {
+      hatsOwned.add(key);
+      hat = key;
+      wearHat();
+    },
+    use: () => {
+      hat = hat === key ? '' : key;
+      wearHat();
+      dirty = true;
+    },
+  });
+  const furnitureItem = (icon: string, key: string, price: number): ShopItem => ({
+    icon,
+    price,
+    owned: () => furniture.has(key),
+    buy: () => {
+      furniture.add(key);
+    },
+  });
+  const SHOP: ShopItem[] = [
     { icon: '🪓', price: 10, owned: () => swordLevel >= 1, buy: () => { swordLevel = 1; void loadSword(1); } },
     { icon: '⚔️', price: 30, owned: () => swordLevel >= 2, buy: () => { swordLevel = 2; void loadSword(2); } },
     { icon: '❤️', price: 15, owned: () => extraHearts >= 3, buy: () => { extraHearts++; maxHearts++; hearts = maxHearts; showHearts(); } },
     { icon: '👟', price: 20, owned: () => boots, buy: () => { boots = true; } },
+    hatItem('🥳', 'party', 8),
+    hatItem('🎩', 'top', 12),
+    hatItem('👑', 'crown', 25),
+    // Furniture appears in his house the next time he goes in.
+    furnitureItem('💡', 'lamp', 6),
+    furnitureItem('📚', 'shelf', 8),
+    furnitureItem('🗄️', 'cabinet', 8),
+    furnitureItem('🛋️', 'couch', 10),
+    furnitureItem('🍽️', 'table', 10),
   ];
   function renderShop(): void {
     shopEl.replaceChildren(
@@ -1022,6 +1111,13 @@ async function createGame(assets: Assets): Promise<Game> {
         price.textContent = owned ? '✅' : `🪙 ${item.price}`;
         b.append(item.icon, price);
         b.addEventListener('click', () => {
+          // Something already owned that can be switched: a hat goes on or comes off.
+          if (item.owned() && item.use) {
+            item.use();
+            sfx.place();
+            renderShop();
+            return;
+          }
           if (item.owned() || coins < item.price) {
             sfx.remove();
             return;
@@ -1061,12 +1157,18 @@ async function createGame(assets: Assets): Promise<Game> {
 
   input.onAction = () => {
     if (!started) return;
+    const lift = peers.driverNear(player.pos, 6);
     if (inside) goOutside();
+    else if (riding) hopOut();
+    else if (fishing) reel();
     else if (driving) exitVehicle();
     else if (nearVillager) talkTo(nearVillager.persona);
+    else if (nearFlag()) startRace();
     else if (nearAnimal) befriend(nearAnimal);
     else if (nearDoor()) goInside();
     else if (nearVehicle()) enterVehicle();
+    else if (lift) riding = lift;
+    else if (canFish()) startFishing();
     dirty = true;
   };
   actionEl.addEventListener('pointerdown', (e) => {
@@ -1301,7 +1403,7 @@ async function createGame(assets: Assets): Promise<Game> {
       if (player.onGround && !driving && !enemies.nearest(player.pos, 45)) safeSpot.copy(player.pos);
     }
 
-    targetable = !flying && !driving && !chat.isOpen && !inside;
+    targetable = !flying && !driving && !chat.isOpen && !inside && !riding;
     const targets: Target[] = [{ id: selfId, pos: player.pos, targetable }, ...peers.targets()];
     // When friends play together, the player with the lowest id runs the skeletons for everyone;
     // the others show the same skeletons and report their hits.
@@ -1571,6 +1673,223 @@ async function createGame(assets: Assets): Promise<Game> {
     }
   }
 
+  // ---- maze treasure: a big chest waiting in the middle ----
+  const mazeChest = assets.props.chest.clone(true);
+  mazeChest.scale.setScalar(2.2);
+  mazeChest.visible = false;
+  scene.add(mazeChest);
+
+  // ---- ring race: start at the flag in a village, run or drive through eight rings ----
+  const flag = makeMarker('🏁');
+  flag.scale.setScalar(0.09);
+  flag.visible = false;
+  scene.add(flag);
+  const flagPos = new THREE.Vector3();
+  const ringGeometry = new THREE.TorusGeometry(2.3, 0.3, 8, 22);
+  const ringNext = new THREE.MeshBasicMaterial({ color: 0xffd43b });
+  const ringLater = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45 });
+  const RACE_SECONDS = 90;
+  let race: { rings: THREE.Mesh[]; next: number; start: number } | null = null;
+  const raceEl = $('race');
+  const nearFlag = (): boolean =>
+    flag.visible && !driving && Math.hypot(flagPos.x - player.pos.x, flagPos.z - player.pos.z) < 4.5;
+  function startRace(): void {
+    const v = villageShown;
+    if (!v || race) return;
+    const rings: THREE.Mesh[] = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + 0.4;
+      const x = v.x + Math.sin(a) * 42;
+      const z = v.z + Math.cos(a) * 42;
+      const ring = new THREE.Mesh(ringGeometry, i === 0 ? ringNext : ringLater);
+      ring.position.set(x, Math.max(groundAt(x, z), SEA_LEVEL) + 2.3, z);
+      // Turned side-on to the circle, so running round the village goes through each one.
+      ring.rotation.y = a + Math.PI / 2;
+      scene.add(ring);
+      rings.push(ring);
+    }
+    race = { rings, next: 0, start: now };
+    raceEl.hidden = false;
+    sfx.chirp();
+    speak('Ready, set, go! Run through the yellow rings!');
+  }
+  function endRace(won: boolean): void {
+    if (!race) return;
+    for (const ring of race.rings) scene.remove(ring);
+    const seconds = Math.round(now - race.start);
+    race = null;
+    raceEl.hidden = true;
+    if (!won) {
+      speak('Out of time. Try again!');
+      return;
+    }
+    // Faster is worth more, but finishing always pays.
+    const prize = Math.max(3, 14 - Math.floor(seconds / 6));
+    coins += prize;
+    showCoins();
+    sfx.win();
+    speak(`You finished in ${seconds} seconds! Here are ${prize} coins!`);
+    cheerUntil = now + 3;
+    dirty = true;
+  }
+
+  // ---- fishing: cast from the shore, wait for the float to dip, then reel in ----
+  const bobber = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3b30 }));
+  bobber.visible = false;
+  scene.add(bobber);
+  let fishing: { biteAt: number; from: THREE.Vector3; splashed: boolean } | null = null;
+  /** Standing on the shore or in the shallows, facing water. */
+  const canFish = (): boolean => {
+    if (swimming || flying || driving || inside || riding) return false;
+    const ahead = groundAt(player.pos.x + Math.sin(facing) * 4, player.pos.z + Math.cos(facing) * 4);
+    return ahead < SEA_LEVEL - 0.6 && groundAt(player.pos.x, player.pos.z) > SEA_LEVEL - 1.2;
+  };
+  function startFishing(): void {
+    fishing = { biteAt: now + 2 + Math.random() * 4, from: player.pos.clone(), splashed: false };
+    bobber.position.set(player.pos.x + Math.sin(facing) * 4, SEA_LEVEL + 0.1, player.pos.z + Math.cos(facing) * 4);
+    bobber.visible = true;
+    sfx.splash();
+    if (hero) busyUntil = now + hero.once('Throw', 1.3) * 0.8;
+  }
+  function stopFishing(): void {
+    fishing = null;
+    bobber.visible = false;
+  }
+  function reel(): void {
+    if (!fishing) return;
+    const biting = now >= fishing.biteAt;
+    stopFishing();
+    if (!biting) {
+      speak('Too soon! Wait for the float to dip.');
+      return;
+    }
+    fishCount++;
+    coins += 2;
+    showCoins();
+    sfx.coin();
+    speak(`You caught a fish! That makes ${fishCount}.`);
+    cheerUntil = now + 2;
+    dirty = true;
+  }
+
+  // ---- riding in a friend's car or boat ----
+  let riding: string | null = null;
+  function hopOut(): void {
+    riding = null;
+    avatar.visible = true;
+    player.pos.x += 3.4;
+    player.pos.y = Math.max(groundAt(player.pos.x, player.pos.z), SWIM_Y);
+    player.vel.set(0, 0, 0);
+    selectTool(tool);
+    sfx.door();
+  }
+
+  // ---- letters to find: Robin's job puts three letters around the village, one of them the right one ----
+  const letterSprites: { sprite: THREE.Sprite; letter: number }[] = [];
+  let lettersShown = '';
+  let letterNag = 0;
+  function updateLetters(who: THREE.Vector3): void {
+    const q = quests.get('ranger');
+    const v = villageShown;
+    const active = q && q.type === 'letter' && q.have < q.need && v ? q : null;
+    const key = active && v ? `${v.id}:${active.k}` : '';
+    if (key !== lettersShown) {
+      lettersShown = key;
+      for (const s of letterSprites) scene.remove(s.sprite);
+      letterSprites.length = 0;
+      if (active && v) {
+        const k = active.k ?? 0;
+        [k, (k + 7) % 26, (k + 15) % 26].forEach((letter, i) => {
+          const a = k * 1.7 + i * 2.1;
+          const x = v.x + Math.sin(a) * 38;
+          const z = v.z + Math.cos(a) * 38;
+          const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture(LETTERS[letter]) }));
+          sprite.scale.set(12, 3, 1);
+          sprite.position.set(x, groundAt(x, z) + 2.4, z);
+          scene.add(sprite);
+          letterSprites.push({ sprite, letter });
+        });
+      }
+    }
+    if (!active) return;
+    for (const s of letterSprites) {
+      if (Math.hypot(s.sprite.position.x - who.x, s.sprite.position.z - who.z) > 2.6) continue;
+      if (s.letter === active.k) {
+        quests.add('letter', 1);
+        showQuests();
+        sfx.win();
+        speak(`Yes! That is the letter ${LETTERS[s.letter]}! Go and tell Robin.`);
+        cheerUntil = now + 2;
+        dirty = true;
+      } else if (now > letterNag) {
+        // The wrong letter is a chance to name it, not a failure.
+        letterNag = now + 4;
+        sfx.remove();
+        speak(`That is ${LETTERS[s.letter]}. Look for ${LETTERS[active.k ?? 0]}!`);
+      }
+    }
+  }
+
+  /** The smaller things going on around the hero: maze treasure, the race, fishing and letters. */
+  function updateExtras(who: THREE.Vector3): void {
+    const place = nearestVillage(who.x, who.z);
+    const maze = place && place.kind === 'maze' && !clearedForts.has(place.id) ? place : null;
+    mazeChest.visible = maze !== null;
+    if (maze) {
+      mazeChest.position.set(maze.x, groundAt(maze.x, maze.z), maze.z);
+      if (Math.hypot(maze.x - who.x, maze.z - who.z) < 3) {
+        clearedForts.add(maze.id);
+        coins += 20;
+        bonusStars += 3;
+        showCoins();
+        showStars(true);
+        sfx.coin();
+        speak('You found the treasure in the middle of the maze! Twenty coins!');
+        cheerUntil = now + 3;
+        dirty = true;
+      }
+    }
+
+    flag.visible = villageShown !== null && !race;
+    if (villageShown) {
+      flagPos.set(villageShown.x + 17, 0, villageShown.z - 17);
+      flagPos.y = groundAt(flagPos.x, flagPos.z);
+      flag.position.copy(flagPos).setY(flagPos.y + 3);
+    }
+    if (race) {
+      const ring = race.rings[race.next];
+      ring.rotation.z += 0.04;
+      if (Math.hypot(ring.position.x - who.x, ring.position.z - who.z) < 3.6) {
+        scene.remove(ring);
+        race.next++;
+        sfx.star();
+        if (race.next >= race.rings.length) endRace(true);
+        else race.rings[race.next].material = ringNext;
+      }
+    }
+    if (race) {
+      const left = RACE_SECONDS - Math.floor(now - race.start);
+      raceEl.textContent = `🏁 ${race.next}/${race.rings.length}  ⏱️ ${Math.max(0, left)}`;
+      if (left <= 0) endRace(false);
+    }
+
+    if (fishing) {
+      const biting = now >= fishing.biteAt;
+      bobber.position.y = biting ? SEA_LEVEL - 0.3 : SEA_LEVEL + 0.1 + Math.sin(now * 3) * 0.05;
+      if (biting && !fishing.splashed) {
+        fishing.splashed = true;
+        sfx.splash();
+      }
+      if (now > fishing.biteAt + 1.6) {
+        stopFishing();
+        speak('It got away! Try again.');
+      } else if (fishing.from.distanceTo(player.pos) > 2) {
+        stopFishing();
+      }
+    }
+    updateLetters(who);
+  }
+
   let actionShown = '';
 
   // ---- map: where the villages, stars and his things are ----
@@ -1591,7 +1910,8 @@ async function createGame(assets: Assets): Promise<Game> {
       }
     }
     for (const v of places) {
-      const icon = v.kind === 'village' ? '🏠' : clearedForts.has(v.id) ? '🏳️' : '🏰';
+      const won = clearedForts.has(v.id);
+      const icon = v.kind === 'village' ? '🏠' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
       icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
     }
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
@@ -1609,6 +1929,13 @@ async function createGame(assets: Assets): Promise<Game> {
         enemies,
         enemyContext,
         terrain,
+        setYaw: (yaw: number) => {
+          camYaw = yaw;
+        },
+        setFacing: (f: number) => {
+          facing = f;
+        },
+        lettersDebug: () => letterSprites.map((l) => ({ letter: LETTERS[l.letter], x: l.sprite.position.x, z: l.sprite.position.z })),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
           dayClock = seconds;
@@ -1637,6 +1964,12 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          race: race ? race.next : -1,
+          fishing: fishing !== null,
+          fish: fishCount,
+          hat,
+          furniture: furniture.size,
+          riding: riding !== null,
           night: +night.toFixed(2),
           level: puzzleLevel,
           host: !enemies.remote,
@@ -1658,6 +1991,16 @@ async function createGame(assets: Assets): Promise<Game> {
         if (driving) {
           updateVehicle(dt, true);
           player.pos.copy(carPos);
+        } else if (riding) {
+          // A passenger: carried along wherever the friend drives.
+          const seat = peers.driverPos(riding);
+          if (seat) {
+            player.pos.copy(seat);
+            avatar.visible = false;
+          } else {
+            hopOut();
+          }
+          updateVehicle(dt, false);
         } else {
           updatePlayer(dt);
           updateVehicle(dt, false);
@@ -1697,13 +2040,39 @@ async function createGame(assets: Assets): Promise<Game> {
             n: getPlayerName(),
             v: driving ? vehicleName : '',
             p: petSpecies,
+            r: riding ? 1 : 0,
           });
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
         // The shop shuts when he walks away from the shopkeeper.
         if (!shopEl.hidden && nearVillager?.persona !== 'shop') shopEl.hidden = true;
         const talk = nearVillager?.persona === 'shop' ? '🛒' : '💬';
-        const icon = inside ? '🚪' : driving ? '🚶' : nearVillager ? talk : nearAnimal ? '🐾' : nearDoor() ? '🚪' : nearVehicle() ? (vehicleKind === 'boat' ? '⛵' : '🚗') : '';
+        const fishIcon = fishing && now >= fishing.biteAt ? '❗' : '🎣';
+        const icon = inside
+          ? '🚪'
+          : riding
+            ? '🚶'
+            : fishing
+              ? fishIcon
+              : driving
+                ? '🚶'
+                : nearVillager
+                  ? talk
+                  : nearFlag()
+                    ? '🏁'
+                    : nearAnimal
+                      ? '🐾'
+                      : nearDoor()
+                        ? '🚪'
+                        : nearVehicle()
+                          ? vehicleKind === 'boat'
+                            ? '⛵'
+                            : '🚗'
+                          : peers.driverNear(player.pos, 6)
+                            ? '🚙'
+                            : canFish()
+                              ? '🎣'
+                              : '';
         if (icon !== actionShown) {
           actionShown = icon;
           actionEl.hidden = icon === '';
@@ -1727,6 +2096,7 @@ async function createGame(assets: Assets): Promise<Game> {
       if (selfBubble.visible && now > emoteUntil) selfBubble.visible = false;
       if (goalStar.visible) goalStar.rotation.y = now * 2;
       updateVillagers(dt, who);
+      if (started) updateExtras(who);
       for (const s of terrain.stars) {
         const mesh = s.group.children[0];
         mesh.rotation.y = now * 2;

@@ -26,6 +26,8 @@ export interface PlayerState {
   v: string;
   /** Their pet's species, or -1. */
   p: number;
+  /** 1 while riding in a friend's vehicle, so their hero is not drawn standing on it. */
+  r: number;
 }
 
 export type NetMessage =
@@ -143,6 +145,20 @@ export class Peers {
     return [...this.map.values()].map((p) => ({ x: p.state.x, z: p.state.z, icon: p.face }));
   }
 
+  /** A friend close by who is driving something we could hop into. */
+  driverNear(pos: THREE.Vector3, reach: number): string | null {
+    for (const [id, p] of this.map) {
+      if (p.vehicleName && Math.hypot(p.pos.x - pos.x, p.pos.z - pos.z) < reach) return id;
+    }
+    return null;
+  }
+
+  /** Where a friend is, if they are still driving. */
+  driverPos(id: string): THREE.Vector3 | null {
+    const p = this.map.get(id);
+    return p && p.vehicleName ? p.group.position : null;
+  }
+
   /** For tests: what each friend is driving and which pet they have. */
   vehiclesDebug(): string[] {
     return [...this.map.values()].map((p) => (p.vehicleName || "on foot") + " pet:" + p.petSpecies);
@@ -243,7 +259,7 @@ export class Peers {
           peer.marker.scale.setScalar(0.06);
         }
       }
-      if (peer.actor) peer.actor.root.visible = peer.vehicleName === '';
+      if (peer.actor) peer.actor.root.visible = peer.vehicleName === '' && state.r !== 1;
       peer.pet?.update(dt, p);
       peer.actor?.play(state.a);
       peer.actor?.update(dt);

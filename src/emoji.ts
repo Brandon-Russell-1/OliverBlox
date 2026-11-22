@@ -37,7 +37,7 @@ export const EMOTES = ['👋', '😀', '😂', '❤️', '👍', '😮', '🆘',
 const labels = new Map<string, THREE.Texture>();
 
 /** A name drawn onto a texture, to float under a friend's face. */
-function textTexture(text: string): THREE.Texture {
+export function textTexture(text: string): THREE.Texture {
   let texture = labels.get(text);
   if (!texture) {
     const c = document.createElement('canvas');

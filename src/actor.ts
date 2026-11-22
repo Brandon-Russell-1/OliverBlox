@@ -52,6 +52,17 @@ export class Actor {
     if (item) hand.add(item);
   }
 
+  /** Put a hat on the character's head, replacing any other. */
+  wear(hat: THREE.Object3D | null): void {
+    const head = this.root.getObjectByName('head');
+    if (!head) return;
+    for (const child of [...head.children]) if (child.userData.hat) head.remove(child);
+    if (hat) {
+      hat.userData.hat = true;
+      head.add(hat);
+    }
+  }
+
   update(dt: number): void {
     this.mixer.update(dt);
   }

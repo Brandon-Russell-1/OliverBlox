@@ -5,6 +5,7 @@ export function unlockAudio(): void {
   try {
     ctx ??= new AudioContext();
     void ctx.resume();
+    loadSamples();
   } catch {
     ctx = null;
   }
@@ -29,22 +30,56 @@ function tone(freq: number, dur: number, type: OscillatorType = 'sine', delay = 
   osc.stop(t0 + dur + 0.02);
 }
 
+const SAMPLES = ['place', 'remove', 'star', 'win', 'swing', 'bonk', 'ouch', 'zap', 'door', 'coin', 'jump', 'chirp', 'splash'];
+const buffers = new Map<string, AudioBuffer>();
+let samplesRequested = false;
+
+/** Download the recorded sound effects once sound is unlocked. Any that fail fall back to beeps. */
+function loadSamples(): void {
+  if (samplesRequested || !ctx) return;
+  samplesRequested = true;
+  const audio = ctx;
+  for (const name of SAMPLES) {
+    fetch(`${import.meta.env.BASE_URL}assets/sfx/${name}.ogg`)
+      .then((res) => res.arrayBuffer())
+      .then((data) => audio.decodeAudioData(data))
+      .then((buffer) => buffers.set(name, buffer))
+      .catch(() => undefined);
+  }
+}
+
+/** Play a recorded effect. Returns false if it is not available, so the caller can beep instead. */
+function sample(name: string, volume = 0.5, rate = 1): boolean {
+  const buffer = buffers.get(name);
+  if (!ctx || !buffer) return false;
+  const source = ctx.createBufferSource();
+  const gain = ctx.createGain();
+  source.buffer = buffer;
+  source.playbackRate.value = rate;
+  gain.gain.value = volume;
+  source.connect(gain).connect(ctx.destination);
+  source.start();
+  return true;
+}
+
 export const sfx = {
-  place: () => tone(420, 0.09, 'triangle', 0, 0.2),
-  remove: () => tone(140, 0.12, 'square', 0, 0.1),
-  jump: () => tone(520, 0.1, 'sine', 0, 0.08),
-  star: () => [660, 880, 1320].forEach((f, i) => tone(f, 0.18, 'triangle', i * 0.07, 0.18)),
-  win: () => [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', i * 0.13, 0.2)),
+  place: () => sample('place') || tone(420, 0.09, 'triangle', 0, 0.2),
+  remove: () => sample('remove') || tone(140, 0.12, 'square', 0, 0.1),
+  jump: () => sample('jump', 0.25) || tone(520, 0.1, 'sine', 0, 0.08),
+  star: () => sample('star', 0.6) || [660, 880, 1320].forEach((f, i) => tone(f, 0.18, 'triangle', i * 0.07, 0.18)),
+  win: () => sample('win', 0.6) || [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', i * 0.13, 0.2)),
   honk: () => {
     tone(311, 0.3, 'sawtooth', 0, 0.09);
     tone(392, 0.3, 'sawtooth', 0, 0.09);
   },
-  swing: () => tone(260, 0.12, 'sawtooth', 0, 0.06),
-  zap: () => [900, 1300].forEach((f, i) => tone(f, 0.12, 'square', i * 0.05, 0.06)),
-  bonk: () => tone(180, 0.15, 'square', 0, 0.12),
-  ouch: () => [300, 200].forEach((f, i) => tone(f, 0.15, 'sawtooth', i * 0.1, 0.1)),
-  chirp: () => [1200, 1600, 1400].forEach((f, i) => tone(f, 0.07, 'square', i * 0.06, 0.05)),
-  door: () => [330, 440].forEach((f, i) => tone(f, 0.12, 'sine', i * 0.08, 0.15)),
+  swing: () => sample('swing', 0.5) || tone(260, 0.12, 'sawtooth', 0, 0.06),
+  zap: () => sample('zap', 0.35) || [900, 1300].forEach((f, i) => tone(f, 0.12, 'square', i * 0.05, 0.06)),
+  bonk: () => sample('bonk', 0.8) || tone(180, 0.15, 'square', 0, 0.12),
+  ouch: () => sample('ouch', 0.5) || [300, 200].forEach((f, i) => tone(f, 0.15, 'sawtooth', i * 0.1, 0.1)),
+  chirp: () => sample('chirp', 0.3) || [1200, 1600, 1400].forEach((f, i) => tone(f, 0.07, 'square', i * 0.06, 0.05)),
+  door: () => sample('door', 0.6) || [330, 440].forEach((f, i) => tone(f, 0.12, 'sine', i * 0.08, 0.15)),
+  coin: () => sample('coin', 0.7) || tone(990, 0.12, 'triangle', 0, 0.15),
+  splash: () => sample('splash', 0.7) || tone(220, 0.2, 'sine', 0, 0.15),
 };
 
 const VOICE_KEY = 'oliverblox-voice';
