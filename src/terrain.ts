@@ -41,7 +41,7 @@ export interface Village {
   /** Stable name for this place, used to remember which forts have been won. */
   id: string;
   /** A friendly village, or a fort held by skeletons. */
-  kind: 'village' | 'fort' | 'maze';
+  kind: 'village' | 'fort' | 'maze' | 'cave' | 'dungeon';
   x: number;
   z: number;
   h: number;
@@ -61,17 +61,51 @@ function villageIn(rx: number, rz: number): Village | null {
   const cached = villages.get(key);
   if (cached !== undefined) return cached;
 
+  if (rx >= DUNGEON_SHIFT / 2 && rz >= DUNGEON_SHIFT / 2) {
+    // Far beyond anywhere a player could walk lie the dungeons: one under every cave.
+    const x = (rx + 0.5) * REGION;
+    const z = (rz + 0.5) * REGION;
+    const dungeon: Village = {
+      id: key,
+      kind: 'dungeon',
+      x,
+      z,
+      h: Math.max(baseHeight(x, z), 4),
+      buildings: [],
+      walls: mazeWalls(x, z, rx * 7919 + rz * 104729 + 5, DUNGEON_CELLS, false),
+    };
+    villages.set(key, dungeon);
+    return dungeon;
+  }
+
   let village: Village | null = null;
   const home = rx === 0 && rz === 0;
   const firstFort = rx === -1 && rz === 0;
   const firstMaze = rx === 0 && rz === -1;
+  const firstCave = rx === -1 && rz === -1;
   // The first village and the first fort are always a short walk from where the game starts.
-  const x = home ? 80 : firstFort ? -150 : firstMaze ? 70 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
-  const z = home ? 75 : firstFort ? 40 : firstMaze ? -150 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
+  const x = home ? 80 : firstFort ? -150 : firstMaze ? 70 : firstCave ? -70 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
+  const z = home ? 75 : firstFort ? 40 : firstMaze ? -150 : firstCave ? -150 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
   const h = baseHeight(x, z);
   const buildable = h > 3 && h < 22;
   const roll = hash2(rx, rz, 71);
-  const kind = home ? 'village' : firstFort ? 'fort' : firstMaze ? 'maze' : !buildable ? null : roll < 0.5 ? 'village' : roll < 0.75 ? 'fort' : 'maze';
+  const kind = home
+    ? 'village'
+    : firstFort
+      ? 'fort'
+      : firstMaze
+        ? 'maze'
+        : firstCave
+          ? 'cave'
+          : !buildable
+            ? null
+            : roll < 0.45
+              ? 'village'
+              : roll < 0.65
+                ? 'fort'
+                : roll < 0.82
+                  ? 'maze'
+                  : 'cave';
   if (kind) {
     // Villages use the blue buildings and forts the red ones; the first of each set stands in the middle.
     const first = kind === 'fort' ? FORT_FIRST : 0;
@@ -93,8 +127,8 @@ function villageIn(rx: number, rz: number): Village | null {
       x,
       z,
       h: Math.max(h, 3),
-      buildings: kind === 'maze' ? [] : buildings,
-      walls: kind === 'maze' ? mazeWalls(x, z, rx * 7919 + rz * 104729 + 17) : [],
+      buildings: kind === 'maze' || kind === 'cave' ? [] : buildings,
+      walls: kind === 'maze' ? mazeWalls(x, z, rx * 7919 + rz * 104729 + 17, MAZE_CELLS, true) : [],
     };
   }
   villages.set(key, village);
@@ -152,8 +186,7 @@ const MAZE_CELL = 8;
  * Lay out a maze: start with every wall up, then knock walls down along a wandering path
  * that visits every cell, so there is always exactly one way to the middle.
  */
-function mazeWalls(cx: number, cz: number, seed: number): { x: number; z: number; rot: number }[] {
-  const n = MAZE_CELLS;
+function mazeWalls(cx: number, cz: number, seed: number, n: number, doorway: boolean): { x: number; z: number; rot: number }[] {
   const rng = mulberry32(seed);
   // open[`h,i,j`] is the gap in the wall on the low-z side of cell (i, j); `v` likewise on the low-x side.
   const open = new Set<string>();
@@ -173,8 +206,8 @@ function mazeWalls(cx: number, cz: number, seed: number): { x: number; z: number
     seen.add(`${a},${b}`);
     stack.push([a, b]);
   }
-  // The way in is the middle of the +z side.
-  open.add(`h,${Math.floor(n / 2)},${n}`);
+  // A surface maze has a way in, in the middle of the +z side. A dungeon is sealed: you arrive inside.
+  if (doorway) open.add(`h,${Math.floor(n / 2)},${n}`);
 
   const x0 = cx - (n * MAZE_CELL) / 2;
   const z0 = cz - (n * MAZE_CELL) / 2;
@@ -188,18 +221,35 @@ function mazeWalls(cx: number, cz: number, seed: number): { x: number; z: number
   return walls;
 }
 
-/** One stretch of maze wall: a plain stone slab. */
-const WALL: PropDef = (() => {
-  const g = new THREE.BoxGeometry(MAZE_CELL + 1.2, 5, 1.2).translate(0, 2.5, 0).toNonIndexed();
+/** Dungeons are bigger mazes, in regions shifted this far from the cave above them. */
+export const DUNGEON_SHIFT = 200;
+export const DUNGEON_CELLS = 7;
+/** How high a dungeon's walls and roof are. */
+export const DUNGEON_HEIGHT = 9;
+export const DUNGEON_HALF = (DUNGEON_CELLS * MAZE_CELL) / 2;
+
+/** The dungeon under a cave, or the cave above a dungeon. */
+export function linkedPlace(place: Village): Village | null {
+  const [rx, rz] = place.id.split(',').map(Number);
+  if (place.kind === 'cave') return villageIn(rx + DUNGEON_SHIFT, rz + DUNGEON_SHIFT);
+  if (place.kind === 'dungeon') return villageIn(rx - DUNGEON_SHIFT, rz - DUNGEON_SHIFT);
+  return null;
+}
+
+/** One stretch of wall of a given height: a plain stone slab. */
+function wallDef(height: number): PropDef {
+  const g = new THREE.BoxGeometry(MAZE_CELL + 1.2, height, 1.2).translate(0, height / 2, 0).toNonIndexed();
   return {
     pos: g.attributes.position.array as Float32Array,
     norm: g.attributes.normal.array as Float32Array,
     uv: g.attributes.uv.array as Float32Array,
     count: g.attributes.position.count,
     radius: MAZE_CELL / 2,
-    height: 5,
+    height,
   };
-})();
+}
+const WALL = wallDef(5);
+const WALL_TALL = wallDef(DUNGEON_HEIGHT + 0.5);
 const WALL_MATERIAL = new THREE.MeshLambertMaterial({ color: 0x9ea1b0 });
 
 const heightCache = new Map<number, number>();
@@ -340,6 +390,9 @@ export class Terrain {
     const gx0 = cx * CELLS;
     const gz0 = cz * CELLS;
 
+    const nearby = nearestVillage(ox + CHUNK / 2, oz + CHUNK / 2);
+    const floorOf = nearby?.kind === 'dungeon' ? nearby : null;
+
     // ---- ground: flat-shaded triangles with one colour each ----
     const tris = CELLS * CELLS * 2;
     const pos = new Float32Array(tris * 9);
@@ -361,6 +414,7 @@ export class Terrain {
       const mx = ox + ((ax + bx + dx) / 3) * CELL;
       const mz = oz + ((az + bz + dz) / 3) * CELL;
       colorAt(mx, mz, (ah + bh + dh) / 3, ny / Math.hypot(nx, ny, nz), c);
+      if (floorOf && Math.hypot(mx - floorOf.x, mz - floorOf.z) < DUNGEON_HALF + 14) c.setRGB(0.2, 0.2, 0.24).multiplyScalar(0.8 + hash2(Math.floor(mx), Math.floor(mz), 3) * 0.4);
       for (const [vx, vz, vh] of [
         [ax, az, ah],
         [bx, bz, bh],
@@ -441,8 +495,20 @@ export class Terrain {
       const z = oz + rng() * CHUNK;
       const size = 0.5 + rng() * 0.5;
       const h = groundAt(x, z);
-      if (h < 1.8 || h > 30) continue;
+      // No grass on a dungeon floor.
+      if (h < 1.8 || h > 30 || (village?.kind === 'dungeon' && inVillage(x, z))) continue;
       put(pick(this.props.grass), x, z, h, size);
+    }
+
+    // ---- a cave mouth: a ring of boulders with a gap to walk in by ----
+    if (village?.kind === 'cave' && village.x >= ox && village.x < ox + CHUNK && village.z >= oz && village.z < oz + CHUNK) {
+      for (let i = 0; i < 7; i++) {
+        const a = 0.75 + (i / 6) * (Math.PI * 2 - 1.5);
+        const x = village.x + Math.sin(a) * 7.5;
+        const z = village.z + Math.cos(a) * 7.5;
+        put(pick(this.props.rocks), x, z, groundAt(x, z) - 0.6, 6 + rng() * 3);
+        colliders.push({ x, z, r: 2.6 });
+      }
     }
 
     // ---- village buildings that stand in this chunk ----
@@ -458,7 +524,7 @@ export class Terrain {
     const walled: Placement[] = [];
     for (const w of village?.walls ?? []) {
       if (w.x < ox || w.x >= ox + CHUNK || w.z < oz || w.z >= oz + CHUNK) continue;
-      walled.push({ def: WALL, x: w.x, y: groundAt(w.x, w.z) - 0.4, z: w.z, scale: 1, rot: w.rot });
+      walled.push({ def: village?.kind === 'dungeon' ? WALL_TALL : WALL, x: w.x, y: groundAt(w.x, w.z) - 0.4, z: w.z, scale: 1, rot: w.rot });
       // A row of small circles along the wall stops anyone walking through it.
       for (let t = -4; t <= 4.01; t += 1.6) {
         colliders.push({ x: w.x + Math.cos(w.rot) * t, z: w.z - Math.sin(w.rot) * t, r: 0.85 });

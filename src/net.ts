@@ -4,6 +4,7 @@ import { loadModel, CHARACTERS } from './assets';
 import { emojiTexture, faceFor, makeMarker, makeLabel, setLabel } from './emoji';
 import { cleanName } from './profile';
 import { Pet } from './animals';
+import { HATS, HELD, makeHat } from './hats';
 import type { AnimatedModel } from './assets';
 import type { EnemySnapshot, Target } from './combat';
 
@@ -28,6 +29,10 @@ export interface PlayerState {
   p: number;
   /** 1 while riding in a friend's vehicle, so their hero is not drawn standing on it. */
   r: number;
+  /** The hat they are wearing, or ''. */
+  k: string;
+  /** What they hold: 0-2 a blade, 3 the wand, -1 nothing. */
+  w: number;
 }
 
 export type NetMessage =
@@ -37,7 +42,7 @@ export type NetMessage =
   | { t: 'hello'; id: string }
   | { t: 'bye' }
   // Shared skeletons: the host sends where they all are, guests report hits, and rewards go to everyone.
-  | ({ t: 'en' } & EnemySnapshot)
+  | ({ t: 'en'; c?: number } & EnemySnapshot)
   | { t: 'dmg'; id: string; n: number; x: number; z: number }
   | { t: 'hit'; to: string; x: number; z: number }
   | { t: 'won'; boss: boolean; fort: string }
@@ -105,6 +110,8 @@ interface Peer {
   vehicle: THREE.Object3D | null;
   petSpecies: number;
   pet: Pet | null;
+  /** The hat and held item last put on their model, so it is only redone when it changes. */
+  gear: string;
   /** While an emoji they sent is showing instead of their face. */
   emoteTime: number;
 }
@@ -159,6 +166,11 @@ export class Peers {
     return p && p.vehicleName ? p.group.position : null;
   }
 
+  /** For tests: the hat and held item shown on each friend. */
+  gearDebug(): string {
+    return [...this.map.values()].map((p) => p.gear).join(";");
+  }
+
   /** For tests: what each friend is driving and which pet they have. */
   vehiclesDebug(): string[] {
     return [...this.map.values()].map((p) => (p.vehicleName || "on foot") + " pet:" + p.petSpecies);
@@ -174,7 +186,7 @@ export class Peers {
       const label = makeLabel();
       group.add(marker, label);
       this.scene.add(group);
-      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, emoteTime: 0 };
+      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, gear: '', emoteTime: 0 };
       this.map.set(id, peer);
     }
     peer.state = state;
@@ -218,6 +230,8 @@ export class Peers {
         if (target.actor) target.group.remove(target.actor.root);
         target.actor = new Actor(gltf.scene, this.clips, PEER_ANIMS);
         target.group.add(target.actor.root);
+        // A fresh model needs its hat and weapon put back on.
+        target.gear = '';
       });
     }
   }
@@ -261,6 +275,21 @@ export class Peers {
       }
       if (peer.actor) peer.actor.root.visible = peer.vehicleName === '' && state.r !== 1;
       peer.pet?.update(dt, p);
+      // Dress them as they are dressed on their own screen.
+      const hat = HATS.includes(state.k) ? state.k : '';
+      const held = HELD[state.w] ? state.w : -1;
+      const gear = `${hat}|${held}`;
+      if (peer.actor && gear !== peer.gear) {
+        peer.gear = gear;
+        const actor = peer.actor;
+        actor.wear(hat ? makeHat(hat) : null);
+        actor.hold(null);
+        if (held >= 0) {
+          void loadModel(HELD[held]).then((gltf) => {
+            if (peer.actor === actor && peer.gear === gear) actor.hold(gltf.scene.clone());
+          });
+        }
+      }
       peer.actor?.play(state.a);
       peer.actor?.update(dt);
     }

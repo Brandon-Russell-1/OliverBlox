@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
-import { Terrain, groundAt, nearestVillage, villagesNear, SEA_LEVEL, VILLAGE_RADIUS, type Village } from './terrain';
+import { Terrain, groundAt, nearestVillage, villagesNear, linkedPlace, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
 import { MiniMap, type MapIcon } from './map';
 import { Home, ROOM } from './home';
 import { Coder } from './coder';
@@ -18,6 +18,7 @@ import { getPlayerName, setPlayerName } from './profile';
 import { music } from './music';
 import { loadSettings, saveSettings, addPlayTime, minutesToday } from './settings';
 import { makeStar } from './models';
+import { makeHat } from './hats';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio } from './audio';
 import { makeRobot, makeClouds } from './models';
@@ -211,6 +212,8 @@ const SKY = {
   moon: new THREE.Color(0x9fb4ff),
 };
 const skyUniforms = sky.material.uniforms;
+/** True while the hero is down in a dungeon: no sky, no sun, only his torch. */
+let underground = false;
 /** Starts in the morning. */
 let dayClock = 40;
 /** 0 in full daylight, 1 in the middle of the night. */
@@ -230,6 +233,20 @@ function updateDay(dt: number): void {
   sun.intensity = 2.1 - 1.5 * night;
   hemi.intensity = 1.25 - 0.6 * night;
   SUN_OFFSET.set(Math.cos(angle) * 100 * (height >= 0 ? 1 : -1), 45 + Math.abs(height) * 90, 45);
+  const fog = scene.fog as THREE.Fog;
+  if (underground) {
+    night = 1;
+    skyUniforms.top.value.setHex(0x030305);
+    skyUniforms.bottom.value.setHex(0x030305);
+    fog.color.setHex(0x030305);
+    fog.near = 10;
+    fog.far = 48;
+    sun.intensity = 0.12;
+    hemi.intensity = 0.4;
+  } else {
+    fog.near = 115;
+    fog.far = 198;
+  }
   music.setNight(night > 0.5);
 }
 
@@ -404,7 +421,7 @@ function setCrawling(on: boolean): void {
 }
 
 input.onFly = () => {
-  if (started && !driving && !inside) setFlying(!flying);
+  if (started && !driving && !inside && !underground) setFlying(!flying);
 };
 flyEl.addEventListener('pointerdown', (e) => {
   e.preventDefault();
@@ -619,35 +636,7 @@ async function createGame(assets: Assets): Promise<Game> {
   }
   if (swordLevel > 0) void loadSword(swordLevel);
 
-  // ---- hats, made from simple shapes ----
-  function makeHat(kind: string): THREE.Object3D {
-    const group = new THREE.Group();
-    const part = (geometry: THREE.BufferGeometry, color: number, y: number): THREE.Mesh => {
-      const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }));
-      mesh.position.y = y;
-      mesh.castShadow = true;
-      group.add(mesh);
-      return mesh;
-    };
-    if (kind === 'party') {
-      part(new THREE.ConeGeometry(0.34, 0.85, 14), 0xff5fa2, 0.42);
-      part(new THREE.SphereGeometry(0.11, 8, 6), 0xffe066, 0.9);
-    } else if (kind === 'top') {
-      part(new THREE.CylinderGeometry(0.62, 0.62, 0.07, 18), 0x22252e, 0.03);
-      part(new THREE.CylinderGeometry(0.4, 0.4, 0.66, 18), 0x22252e, 0.36);
-      part(new THREE.CylinderGeometry(0.41, 0.41, 0.12, 18), 0xe8413c, 0.14);
-    } else {
-      part(new THREE.CylinderGeometry(0.46, 0.42, 0.3, 16, 1, true), 0xffc928, 0.15);
-      for (let i = 0; i < 6; i++) {
-        const spike = part(new THREE.ConeGeometry(0.11, 0.3, 6), 0xffc928, 0.42);
-        spike.position.x = Math.sin((i / 6) * Math.PI * 2) * 0.42;
-        spike.position.z = Math.cos((i / 6) * Math.PI * 2) * 0.42;
-      }
-    }
-    // Sits on top of the head bone.
-    group.position.y = 1.02;
-    return group;
-  }
+  // ---- hats ----
   function wearHat(): void {
     hero?.wear(hat ? makeHat(hat) : null);
   }
@@ -735,7 +724,10 @@ async function createGame(assets: Assets): Promise<Game> {
     } else if (msg.t === 'hello') {
       selfId = String(msg.id);
     } else if (msg.t === 'en') {
-      if (enemies.remote) enemies.apply(msg);
+      if (enemies.remote) {
+        enemies.apply(msg);
+        if (typeof msg.c === 'number' && Number.isFinite(msg.c) && Math.abs(msg.c - dayClock) > 3) dayClock = msg.c % DAY_LENGTH;
+      }
     } else if (msg.t === 'dmg') {
       if (!enemies.remote) enemies.damageById(msg.id, msg.n, msg.x, msg.z, enemyContext);
     } else if (msg.t === 'hit') {
@@ -1162,6 +1154,7 @@ async function createGame(assets: Assets): Promise<Game> {
     else if (riding) hopOut();
     else if (fishing) reel();
     else if (driving) exitVehicle();
+    else if (holeNear) useHole();
     else if (nearVillager) talkTo(nearVillager.persona);
     else if (nearFlag()) startRace();
     else if (nearAnimal) befriend(nearAnimal);
@@ -1218,7 +1211,7 @@ async function createGame(assets: Assets): Promise<Game> {
             dirty = true;
           }
           garageEl.hidden = true;
-          if (inside) return;
+          if (inside || underground) return;
           if (driving) exitVehicle();
           const spot = findSpot(item.kind);
           if (!spot) {
@@ -1306,7 +1299,7 @@ async function createGame(assets: Assets): Promise<Game> {
       showCoins();
       showStars(true);
       sfx.win();
-      speak('You beat the giant skeleton! The fort is safe now.');
+      speak(fort.startsWith('b') ? 'You beat the giant skeleton! The treasure is yours!' : 'You beat the giant skeleton! The fort is safe now.');
       cheerUntil = now + 3;
       dirty = true;
       return;
@@ -1412,16 +1405,20 @@ async function createGame(assets: Assets): Promise<Game> {
       // Anyone walking up to a fort that has not been won brings out its giant skeleton.
       for (const t of targets) {
         const fort = nearestVillage(t.pos.x, t.pos.z);
+        // A dungeon's giant skeleton waits by the treasure; a separate mark records beating it.
+        const deep = fort?.kind === 'dungeon';
+        const mark = fort ? (deep ? `b${fort.id}` : fort.id) : '';
         if (
-          fort?.kind === 'fort' &&
+          fort &&
+          (fort.kind === 'fort' || deep) &&
           t.targetable &&
           parent.fighting &&
-          !clearedForts.has(fort.id) &&
+          !clearedForts.has(mark) &&
           !enemies.bossAlive &&
-          Math.hypot(fort.x - t.pos.x, fort.z - t.pos.z) < 60
+          Math.hypot(fort.x - t.pos.x, fort.z - t.pos.z) < (deep ? 20 : 60)
         ) {
-          bossFort = fort.id;
-          enemies.spawnBoss(fort.x + 10, fort.z + 10);
+          bossFort = mark;
+          enemies.spawnBoss(fort.x + (deep ? 3 : 10), fort.z + (deep ? 3 : 10));
         }
       }
     }
@@ -1430,7 +1427,8 @@ async function createGame(assets: Assets): Promise<Game> {
     netEnemyTimer -= dt;
     if (!enemies.remote && net.connected && netEnemyTimer <= 0) {
       netEnemyTimer = 0.12;
-      net.send({ t: 'en', ...enemies.snapshot() });
+      // The host's clock is everyone's clock, so it is day or night for all at once.
+      net.send({ t: 'en', c: Math.round(dayClock), ...enemies.snapshot() });
     }
   }
 
@@ -1638,7 +1636,8 @@ async function createGame(assets: Assets): Promise<Game> {
     camWant.copy(who).setY(who.y + (driving ? 2.6 : crawling ? 1 : started ? 1.9 : 1.3));
     camTarget.lerp(camWant, Math.min(1, 12 * dt));
     // Close up on the hero while choosing one on the start screen.
-    const dist = !started ? 6.5 : inside ? 7 : driving ? camDist + 4 : camDist;
+    // Pulled in close underground, where walls would otherwise get between the camera and the hero.
+    const dist = !started ? 6.5 : inside ? 7 : underground ? Math.min(camDist, 6.5) : driving ? camDist + 4 : camDist;
     const pitch = started ? camPitch : 0.12;
     camOffset.set(Math.sin(camYaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(camYaw) * Math.cos(pitch));
     camera.position.copy(camTarget).addScaledVector(camOffset, dist);
@@ -1646,6 +1645,14 @@ async function createGame(assets: Assets): Promise<Game> {
     const floor = Math.max(groundAt(camera.position.x, camera.position.z), SEA_LEVEL) + 0.6;
     if (camera.position.y < floor) camera.position.y = floor;
     if (inside) home.clamp(camera.position, 0.5, 0.6);
+    if (dungeonNow) {
+      // Underground the camera stays inside the outer walls and under the roof.
+      const edge = DUNGEON_HALF - 1;
+      camera.position.x = Math.min(dungeonNow.x + edge, Math.max(dungeonNow.x - edge, camera.position.x));
+      camera.position.z = Math.min(dungeonNow.z + edge, Math.max(dungeonNow.z - edge, camera.position.z));
+      camera.position.y = Math.min(camera.position.y, dungeonNow.h + DUNGEON_HEIGHT - 0.8);
+      camera.lookAt(camTarget);
+    }
     camera.lookAt(camTarget);
   }
 
@@ -1830,21 +1837,96 @@ async function createGame(assets: Assets): Promise<Game> {
     }
   }
 
-  /** The smaller things going on around the hero: maze treasure, the race, fishing and letters. */
+  // ---- caves and dungeons ----
+  // The dark hole at a cave mouth, the ladder back out, and the roof overhead.
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(3.4, 24), new THREE.MeshBasicMaterial({ color: 0x050507 }));
+  hole.rotation.x = -Math.PI / 2;
+  hole.visible = false;
+  const ladder = makeMarker('🪜');
+  ladder.scale.setScalar(0.09);
+  ladder.visible = false;
+  const roof = new THREE.Mesh(
+    new THREE.PlaneGeometry(DUNGEON_HALF * 2 + 40, DUNGEON_HALF * 2 + 40),
+    new THREE.MeshLambertMaterial({ color: 0x2a2a31, side: THREE.DoubleSide }),
+  );
+  roof.rotation.x = Math.PI / 2;
+  roof.visible = false;
+  // The hero's torch: the only real light underground.
+  const torch = new THREE.PointLight(0xffc98a, 0, 34, 1.4);
+  torch.position.y = 3;
+  avatar.add(torch);
+  scene.add(hole, ladder, roof);
+  /** The dungeon he is in, if any. */
+  let dungeonNow: Village | null = null;
+  /** The cave mouth or dungeon ladder he is standing at, if any. */
+  let holeNear: Village | null = null;
+  /** Where a dungeon's ladder is: just inside its +z edge. */
+  const ladderSpot = (d: Village): THREE.Vector3 =>
+    new THREE.Vector3(d.x, groundAt(d.x, d.z + DUNGEON_HALF - 4), d.z + DUNGEON_HALF - 4);
+  function useHole(): void {
+    const from = holeNear;
+    const to = from ? linkedPlace(from) : null;
+    // A cave so far out that its dungeon would not exist is just a hole in the ground.
+    if (!from || !to || (from.kind === 'cave' && to.kind !== 'dungeon')) return;
+    setFlying(false);
+    setCrawling(false);
+    if (to.kind === 'dungeon') {
+      player.pos.copy(ladderSpot(to));
+      // Arrive looking along the first corridor, with the camera behind.
+      facing = Math.PI;
+      camYaw = 0;
+      camPitch = 0.55;
+      speak('Down into the dark! Find the treasure.');
+    } else {
+      player.pos.set(to.x, groundAt(to.x, to.z + 11), to.z + 11);
+      speak('Back up in the sunshine!');
+    }
+    player.vel.set(0, 0, 0);
+    camTarget.copy(player.pos);
+    sfx.door();
+    dirty = true;
+  }
+  function updateCaves(who: THREE.Vector3, place: Village | null): void {
+    const dist = place ? Math.hypot(place.x - who.x, place.z - who.z) : Infinity;
+    const cave = place?.kind === 'cave' && dist < 150 ? place : null;
+    const dungeon = place?.kind === 'dungeon' && dist < DUNGEON_HALF + 30 ? place : null;
+    underground = dungeon !== null;
+    dungeonNow = dungeon;
+    hole.visible = cave !== null;
+    if (cave) hole.position.set(cave.x, groundAt(cave.x, cave.z) + 0.12, cave.z);
+    roof.visible = ladder.visible = dungeon !== null;
+    torch.intensity = dungeon ? 30 : 0;
+    holeNear = null;
+    if (cave && dist < 4 && !driving) holeNear = cave;
+    if (dungeon) {
+      const spot = ladderSpot(dungeon);
+      roof.position.set(dungeon.x, dungeon.h + DUNGEON_HEIGHT, dungeon.z);
+      ladder.position.copy(spot).setY(spot.y + 3);
+      if (Math.hypot(spot.x - who.x, spot.z - who.z) < 3.5) holeNear = dungeon;
+      // A sealed room: nobody walks out through the outer wall.
+      const edge = DUNGEON_HALF - 1.2;
+      player.pos.x = Math.min(dungeon.x + edge, Math.max(dungeon.x - edge, player.pos.x));
+      player.pos.z = Math.min(dungeon.z + edge, Math.max(dungeon.z - edge, player.pos.z));
+    }
+  }
+
+  /** The smaller things going on around the hero: caves, maze treasure, the race, fishing and letters. */
   function updateExtras(who: THREE.Vector3): void {
     const place = nearestVillage(who.x, who.z);
-    const maze = place && place.kind === 'maze' && !clearedForts.has(place.id) ? place : null;
+    updateCaves(who, place);
+    const maze = place && (place.kind === 'maze' || place.kind === 'dungeon') && !clearedForts.has(place.id) ? place : null;
     mazeChest.visible = maze !== null;
     if (maze) {
       mazeChest.position.set(maze.x, groundAt(maze.x, maze.z), maze.z);
       if (Math.hypot(maze.x - who.x, maze.z - who.z) < 3) {
         clearedForts.add(maze.id);
-        coins += 20;
-        bonusStars += 3;
+        const deep = maze.kind === 'dungeon';
+        coins += deep ? 40 : 20;
+        bonusStars += deep ? 6 : 3;
         showCoins();
         showStars(true);
         sfx.coin();
-        speak('You found the treasure in the middle of the maze! Twenty coins!');
+        speak(deep ? 'You found the dungeon treasure! Forty coins!' : 'You found the treasure in the middle of the maze! Twenty coins!');
         cheerUntil = now + 3;
         dirty = true;
       }
@@ -1911,7 +1993,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     for (const v of places) {
       const won = clearedForts.has(v.id);
-      const icon = v.kind === 'village' ? '🏠' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
+      const icon = v.kind === 'village' ? '🏠' : v.kind === 'cave' ? '🕳️' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
       icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
     }
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
@@ -1936,6 +2018,7 @@ async function createGame(assets: Assets): Promise<Game> {
           facing = f;
         },
         lettersDebug: () => letterSprites.map((l) => ({ letter: LETTERS[l.letter], x: l.sprite.position.x, z: l.sprite.position.z })),
+        peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
           dayClock = seconds;
@@ -1964,6 +2047,7 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          underground,
           race: race ? race.next : -1,
           fishing: fishing !== null,
           fish: fishCount,
@@ -2041,6 +2125,8 @@ async function createGame(assets: Assets): Promise<Game> {
             v: driving ? vehicleName : '',
             p: petSpecies,
             r: riding ? 1 : 0,
+            k: hat,
+            w: tool === SWORD ? swordLevel : tool === STAFF ? 3 : -1,
           });
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
@@ -2056,7 +2142,11 @@ async function createGame(assets: Assets): Promise<Game> {
               ? fishIcon
               : driving
                 ? '🚶'
-                : nearVillager
+                : holeNear
+                  ? holeNear.kind === 'cave'
+                    ? '🕳️'
+                    : '🪜'
+                  : nearVillager
                   ? talk
                   : nearFlag()
                     ? '🏁'
@@ -2104,7 +2194,8 @@ async function createGame(assets: Assets): Promise<Game> {
       }
       updateCamera(dt, who);
       updateBolt(dt, who);
-      if (started && !inside) updateMap(dt, who);
+      mapEl.hidden = inside !== null || underground;
+      if (started && !inside && !underground) updateMap(dt, who);
 
       // Sky, sea, clouds and the sun's shadow all travel with the player.
       sky.position.copy(camera.position);

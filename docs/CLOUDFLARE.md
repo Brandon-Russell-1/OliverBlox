@@ -95,7 +95,7 @@ The same Worker also runs the rooms for playing together, at no extra cost: it i
 
 Only people who have both your Worker's address and your family code can join, so there are no strangers. The room passes messages between players and stores nothing.
 
-What is shared: where each player is, their hero, name, vehicle and pet; every block built; the skeletons (everyone fights the same ones and everyone is rewarded when one falls); stars and treasure chests picked up while together (everyone gets the prize); and emoji messages. What is not shared: each player keeps their own coins, their own list of jobs, and their own time of day.
+What is shared: where each player is, their hero, name, hat, the weapon in their hand, vehicle and pet; the time of day; every block built; the skeletons (everyone fights the same ones and everyone is rewarded when one falls); stars and treasure chests picked up while together (everyone gets the prize); and emoji messages. What is not shared: each player keeps their own coins, their own list of jobs, and their own house and furniture.
 
 One player's device runs the skeletons for the room and the others follow it. If that player leaves, another takes over without the skeletons disappearing.
 
