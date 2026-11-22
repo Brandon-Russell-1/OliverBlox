@@ -116,6 +116,11 @@ export class Quests {
     return changed;
   }
 
+  /** The job this villager has given out, if any. */
+  get(persona: string): Quest | undefined {
+    return this.active[persona];
+  }
+
   list(): Quest[] {
     return Object.values(this.active);
   }

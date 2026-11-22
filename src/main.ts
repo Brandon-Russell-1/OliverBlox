@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import './style.css';
-import { loadAssets, loadModel, CHARACTERS, type Assets } from './assets';
+import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
 import { Terrain, groundAt, nearestVillage, SEA_LEVEL, VILLAGE_RADIUS, type Village } from './terrain';
 import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
@@ -365,7 +365,21 @@ attackEl.addEventListener('pointerdown', (e) => {
 // ---------- start, save, grown-ups panel ----------
 
 const chat = new Chat();
-chat.context = () => ({ stars: starTotal(), hearts });
+chat.context = (personaId) => ({
+  stars: starTotal(),
+  coins,
+  hearts,
+  maxHearts,
+  hero: localStorage.getItem(HERO_KEY) ?? 'Rogue',
+  pet: PETS[petSpecies] ?? null,
+  sword: swordLevel,
+  boots,
+  // The job this character gave him, and where it stands.
+  questState: quests.state(personaId),
+  quest: quests.get(personaId) ?? null,
+  // Every job on the go, so Bolt can help with any of them.
+  quests: quests.list(),
+});
 
 function start(): void {
   if (started || !game) return;

@@ -49,7 +49,7 @@ const ROCKS = ['Rock_1_A', 'Rock_1_H', 'Rock_2_A', 'Rock_2_E', 'Rock_3_A', 'Rock
 const BUSHES = ['Bush_1_A', 'Bush_2_A', 'Bush_3_A', 'Bush_4_A'];
 const GRASS = ['Grass_1_A', 'Grass_1_B', 'Grass_2_A', 'Grass_2_B'];
 const ANIMS = ['MovementBasic', 'MovementAdvanced', 'General', 'Simulation', 'CombatMelee'];
-const PETS = ['dog', 'cat', 'bunny', 'cow', 'deer', 'fox', 'pig', 'chick'];
+export const PETS = ['dog', 'cat', 'bunny', 'cow', 'deer', 'fox', 'pig', 'chick'];
 const ENEMIES = ['Skeleton_Minion', 'Skeleton_Warrior'];
 
 /** Swap the loader's physically based materials for cheap ones that suit the art and tablets. */

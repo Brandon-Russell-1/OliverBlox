@@ -128,8 +128,8 @@ export class Chat {
   private readonly text = $('chat-text');
   private readonly inputEl = $<HTMLInputElement>('chat-input');
   private readonly mic = $('chat-mic');
-  /** Extra facts about the game sent with each message, e.g. how many stars he has. */
-  context: () => Record<string, number> = () => ({});
+  /** Facts about the game sent with each message, so the character knows what Oliver is up to. */
+  context: (personaId: string) => object = () => ({});
 
   constructor() {
     $('chat-close').addEventListener('click', () => this.close());
@@ -207,7 +207,7 @@ export class Chat {
         const res = await fetch(`${url}/chat`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-family-code': code },
-          body: JSON.stringify({ character: persona.id, messages: history.slice(-12), context: this.context() }),
+          body: JSON.stringify({ character: persona.id, messages: history.slice(-12), context: this.context(persona.id) }),
         });
         if (res.ok) reply = ((await res.json()) as { reply?: string }).reply ?? '';
         else log(`(AI error ${res.status} from ${persona.name})`);
