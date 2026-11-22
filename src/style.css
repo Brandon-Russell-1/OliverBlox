@@ -338,6 +338,38 @@ body:not(.touch) #fly {
   right: calc(274px + env(safe-area-inset-right));
 }
 
+#emote-btn {
+  right: calc(334px + env(safe-area-inset-right));
+}
+
+#emotes {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(20, 30, 80, 0.85);
+  z-index: 4;
+}
+
+#emotes[hidden] {
+  display: none;
+}
+
+#emotes button {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 1;
+  min-width: 36px;
+  border-radius: 14px;
+  background: #fff;
+  font-size: 30px;
+}
+
 .chip.on {
   background: #7df0a0;
   border-color: #fff;

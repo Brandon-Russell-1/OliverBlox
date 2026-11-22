@@ -61,6 +61,42 @@ export const PERSONAS: Record<string, Persona> = {
       'Trees drink water with their roots. What do you drink?',
     ],
   },
+  guard: {
+    id: 'guard',
+    name: 'Gus',
+    emoji: '🛡️',
+    voice: { pitch: 0.8, rate: 0.95 },
+    hello: 'Halt! Oh, it is you. Hello, hero!',
+    lines: [
+      'I keep the village safe. The fort has a giant skeleton!',
+      'Left, right, left, right. Can you march with me?',
+      'How many hearts do you have? Count them!',
+    ],
+  },
+  ranger: {
+    id: 'ranger',
+    name: 'Robin',
+    emoji: '🏹',
+    voice: { pitch: 1.15, rate: 1 },
+    hello: 'Hi there! I am Robin. I know these woods.',
+    lines: [
+      'Gold chests hide out in the wilds. Keep your eyes open!',
+      'Look at your map. The little house shows the way home.',
+      'Which is bigger, a deer or a bunny?',
+    ],
+  },
+  tinker: {
+    id: 'tinker',
+    name: 'Tess',
+    emoji: '🔧',
+    voice: { pitch: 1.4, rate: 1.05 },
+    hello: 'Oh, hello! I am Tess. I love building things.',
+    lines: [
+      'Try the puzzle button. You can tell Bolt what to build!',
+      'Forward, block, forward, block. What shape does that make?',
+      'What colour blocks do you like best?',
+    ],
+  },
 };
 
 const SETTINGS_KEY = 'oliverblox-ai';

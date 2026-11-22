@@ -27,7 +27,11 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Houses:** stand by a village house and tap the door button to go inside; tap it again to leave.
 - **Garage unlocks:** the car and the rowing boat are free; the rest are bought once with coins.
 - **Program Bolt:** the puzzle button opens a strip of picture commands (forward, turn left, turn right, place a block). Line some up, pick how many times to repeat, press play, and Bolt carries them out. It builds with whichever colour is selected.
-- **Play together:** the two-people button asks for a room name. Everyone who types the same name is in the same world, sees each other, and builds together. It needs the AI helper set up (see below), because it runs through your own Cloudflare Worker.
+- **Play together:** the two-people button asks for a room name. Everyone who types the same name is in the same world: they see each other, build together and fight the same skeletons, and everyone gets the star and coin when one is beaten. It needs the AI helper set up (see below), because it runs through your own Cloudflare Worker.
+- **Finding friends:** each player gets an animal face. It floats over their hero at the same size however far away they are, and shows on the map, pinned to the rim when they are off it. The room panel shows your own face first, then your friends'.
+- **Emoji messages:** the smiley button opens eight emoji. Tapping one shows it over your hero for everyone in the room. Pictures from that list are the only thing players can send each other.
+- **Townsfolk:** Gus the guard, Robin the ranger and Tess the tinker stroll around each village and like a chat.
+- **Smarter skeletons:** they wander when nobody is about and keep apart so they surround rather than pile up. Rogues circle and dart in, mages back away to keep their distance, and a badly hurt warrior runs off for a moment.
 - **Map:** the round map in the top right turns with the view, so up on the map is straight ahead. The 🏠 on its rim points to the nearest village. Tap the map to make it big.
 - **Quests:** villagers with a ❗ over their head have a job (find stars, bonk skeletons, build with blocks, befriend an animal). Chips on the left show progress; go back when they show 🎁 to collect coins.
 - **Shop:** the villager with the 🛒 sells an axe, a great sword, extra hearts and running shoes for coins. Skeletons drop a coin each too.
@@ -57,7 +61,8 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 2. Villages, weapons and skeletons, garage, talking characters (done)
 3. Quests, shop and pets (done)
 4. Forts, treasure, house interiors, garage unlocks, program Bolt, playing together (done)
-5. Shared enemies and quests when playing together; more places to find
+5. Shared skeletons, friend markers, emoji, townsfolk (done)
+6. Shared quests and stars when playing together; more places to find
 
 ## Credits
 

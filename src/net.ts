@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Actor } from './actor';
 import { loadModel, CHARACTERS } from './assets';
+import { emojiTexture, faceFor, makeMarker } from './emoji';
+import type { EnemySnapshot, Target } from './combat';
 
 /** What each player tells the others about themselves, several times a second. */
 export interface PlayerState {
@@ -13,6 +15,8 @@ export interface PlayerState {
   a: string;
   /** Hero name. */
   h: string;
+  /** 1 if skeletons may go for this player (not flying, driving, indoors or chatting). */
+  g: number;
 }
 
 export type NetMessage =
@@ -20,7 +24,14 @@ export type NetMessage =
   | { t: 'b'; x: number; y: number; z: number; k: number }
   | { t: 'B'; list: [number, number, number, number][] }
   | { t: 'hello'; id: string }
-  | { t: 'bye' };
+  | { t: 'bye' }
+  // Shared skeletons: the host sends where they all are, guests report hits, and rewards go to everyone.
+  | ({ t: 'en' } & EnemySnapshot)
+  | { t: 'dmg'; id: string; n: number; x: number; z: number }
+  | { t: 'hit'; to: string; x: number; z: number }
+  | { t: 'won'; boss: boolean; fort: string }
+  // An emoji from the fixed list, by position in it.
+  | { t: 'e'; i: number };
 
 /** A thin wrapper over the WebSocket to the family's relay. */
 export class Net {
@@ -69,9 +80,14 @@ export class Net {
 
 interface Peer {
   state: PlayerState;
+  pos: THREE.Vector3;
   group: THREE.Group;
   actor: Actor | null;
   hero: string;
+  face: string;
+  marker: THREE.Sprite;
+  /** While an emoji they sent is showing instead of their face. */
+  emoteTime: number;
 }
 
 const PEER_ANIMS = ['Idle_A', 'Walking_A', 'Running_A', 'Jump_Idle', 'Crawling', 'Crouching', 'Cheering', 'Melee_1H_Attack_Slice_Horizontal', 'Throw', 'Hit_A'];
@@ -89,16 +105,38 @@ export class Peers {
     return this.map.size;
   }
 
+  ids(): string[] {
+    return [...this.map.keys()];
+  }
+
+  /** The friends' faces in a row, for the room panel. */
+  faces(): string {
+    return [...this.map.values()].map((p) => p.face).join('');
+  }
+
+  /** Where skeletons can find each friend. */
+  targets(): Target[] {
+    return [...this.map.entries()].map(([id, p]) => ({ id, pos: p.pos, targetable: p.state.g === 1 }));
+  }
+
+  positions(): { x: number; z: number; icon: string }[] {
+    return [...this.map.values()].map((p) => ({ x: p.state.x, z: p.state.z, icon: p.face }));
+  }
+
   set(id: string, state: PlayerState): void {
     let peer = this.map.get(id);
     if (!peer) {
       const group = new THREE.Group();
       group.position.set(state.x, state.y, state.z);
+      const face = faceFor(id);
+      const marker = makeMarker(face);
+      group.add(marker);
       this.scene.add(group);
-      peer = { state, group, actor: null, hero: '' };
+      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, emoteTime: 0 };
       this.map.set(id, peer);
     }
     peer.state = state;
+    peer.pos.set(state.x, state.y, state.z);
     // Only names from the known list are ever turned into a download.
     const hero = CHARACTERS.includes(state.h) ? state.h : 'Rogue';
     if (hero !== peer.hero) {
@@ -106,11 +144,20 @@ export class Peers {
       const target = peer;
       void loadModel(`char/${hero}.glb`).then((gltf) => {
         if (target.hero !== hero) return;
+        if (target.actor) target.group.remove(target.actor.root);
         target.actor = new Actor(gltf.scene, this.clips, PEER_ANIMS);
-        target.group.clear();
         target.group.add(target.actor.root);
       });
     }
+  }
+
+  /** Show an emoji over a friend's head for a few seconds. */
+  emote(id: string, emoji: string): void {
+    const peer = this.map.get(id);
+    if (!peer) return;
+    peer.marker.material.map = emojiTexture(emoji);
+    peer.marker.scale.setScalar(0.1);
+    peer.emoteTime = 3.5;
   }
 
   remove(id: string): void {
@@ -123,20 +170,23 @@ export class Peers {
     for (const id of [...this.map.keys()]) this.remove(id);
   }
 
-  positions(): { x: number; z: number }[] {
-    return [...this.map.values()].map((p) => ({ x: p.state.x, z: p.state.z }));
-  }
-
   update(dt: number): void {
     for (const peer of this.map.values()) {
       const { state, group } = peer;
       const p = group.position;
       // Teleports (vehicles from the garage, going indoors) snap; ordinary movement glides.
-      if (Math.hypot(state.x - p.x, state.y - p.y, state.z - p.z) > 25) p.set(state.x, state.y, state.z);
-      else p.lerp(new THREE.Vector3(state.x, state.y, state.z), Math.min(1, 10 * dt));
+      if (p.distanceTo(peer.pos) > 25) p.copy(peer.pos);
+      else p.lerp(peer.pos, Math.min(1, 10 * dt));
       let diff = state.f - group.rotation.y;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       group.rotation.y += diff * Math.min(1, 10 * dt);
+      if (peer.emoteTime > 0) {
+        peer.emoteTime -= dt;
+        if (peer.emoteTime <= 0) {
+          peer.marker.material.map = emojiTexture(peer.face);
+          peer.marker.scale.setScalar(0.06);
+        }
+      }
       peer.actor?.play(state.a);
       peer.actor?.update(dt);
     }

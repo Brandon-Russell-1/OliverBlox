@@ -12,7 +12,8 @@ import { Input } from './input';
 import { Animals, Pet, type Animal } from './animals';
 import { Quests, QUEST_ICONS, type QuestSave } from './quests';
 import { Actor } from './actor';
-import { Enemies, type EnemyContext } from './combat';
+import { Enemies, type EnemyContext, type Target } from './combat';
+import { emojiTexture, faceFor, makeMarker, EMOTES } from './emoji';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio } from './audio';
 import { makeRobot, makeClouds } from './models';
@@ -83,29 +84,15 @@ const VILLAGERS = [
   { persona: 'barbarian', model: 'Barbarian', dx: -8, dz: 4 },
   { persona: 'druid', model: 'Druid', dx: 2, dz: -9 },
   { persona: 'shop', model: 'Engineer', dx: -3, dz: 9 },
+  // Townsfolk who stroll around the green and like a chat. They give no jobs.
+  { persona: 'guard', model: 'Knight', dx: 13, dz: -7, wander: true },
+  { persona: 'ranger', model: 'Ranger', dx: -12, dz: -8, wander: true },
+  { persona: 'tinker', model: 'Rogue', dx: 9, dz: 12, wander: true },
 ];
 
 /** What floats over a villager's head: a job to give, one under way, or a reward waiting. */
 const MARKS = { none: '', new: '❗', doing: '⏳', done: '🎁' };
-const emojiTextures = new Map<string, THREE.Texture>();
-function emojiTexture(emoji: string): THREE.Texture {
-  let texture = emojiTextures.get(emoji);
-  if (!texture) {
-    const c = document.createElement('canvas');
-    c.width = c.height = 96;
-    const g = c.getContext('2d');
-    if (g) {
-      g.font = '72px sans-serif';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText(emoji, 48, 54);
-    }
-    texture = new THREE.CanvasTexture(c);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    emojiTextures.set(emoji, texture);
-  }
-  return texture;
-}
+
 
 interface Save {
   v: 2;
@@ -503,6 +490,29 @@ async function createGame(assets: Assets): Promise<Game> {
   tilt.position.y = 1.1;
   avatar.add(tilt);
   scene.add(avatar);
+  // ---- emoji messages: the only thing players can say to each other ----
+  const selfBubble = makeMarker(EMOTES[0]);
+  selfBubble.scale.setScalar(0.1);
+  selfBubble.visible = false;
+  avatar.add(selfBubble);
+  let emoteUntil = 0;
+  const emotesEl = $('emotes');
+  EMOTES.forEach((emoji, i) => {
+    const b = document.createElement('button');
+    b.textContent = emoji;
+    b.addEventListener('click', () => {
+      selfBubble.material.map = emojiTexture(emoji);
+      selfBubble.visible = true;
+      emoteUntil = now + 3.5;
+      net.send({ t: 'e', i });
+      sfx.chirp();
+    });
+    emotesEl.appendChild(b);
+  });
+  $('emote-btn').addEventListener('click', () => {
+    emotesEl.hidden = !emotesEl.hidden;
+  });
+
   let hero: Actor | null = null;
   let heroIndex = Math.max(0, CHARACTERS.indexOf(localStorage.getItem(HERO_KEY) ?? 'Rogue'));
   let heroToken = 0;
@@ -593,6 +603,21 @@ async function createGame(assets: Assets): Promise<Game> {
     } else if (msg.t === 'B' && Array.isArray(msg.list)) {
       blocks.load(msg.list.slice(0, 5000).filter((b) => Array.isArray(b) && b.length === 4 && b.every(Number.isInteger)));
       dirty = true;
+    } else if (msg.t === 'hello') {
+      selfId = String(msg.id);
+    } else if (msg.t === 'en') {
+      if (enemies.remote) enemies.apply(msg);
+    } else if (msg.t === 'dmg') {
+      if (!enemies.remote) enemies.damageById(msg.id, msg.n, msg.x, msg.z, enemyContext);
+    } else if (msg.t === 'hit') {
+      if (msg.to === selfId && Number.isFinite(msg.x) && Number.isFinite(msg.z)) hurt(msg);
+    } else if (msg.t === 'won') {
+      reward(msg.boss === true, typeof msg.fort === 'string' ? msg.fort.slice(0, 20) : '');
+    } else if (msg.t === 'e') {
+      if (EMOTES[msg.i]) {
+        peers.emote(from, EMOTES[msg.i]);
+        sfx.chirp();
+      }
     }
   };
   const roomInput = $<HTMLInputElement>('room-code');
@@ -606,6 +631,8 @@ async function createGame(assets: Assets): Promise<Game> {
     if (!on) {
       peers.clear();
       greeted.clear();
+      selfId = 'me';
+      enemies.remote = false;
     }
   };
   friendsBtn.addEventListener('click', () => {
@@ -715,6 +742,8 @@ async function createGame(assets: Assets): Promise<Game> {
     actor: Actor;
     persona: string;
     marker: THREE.Sprite;
+    /** Set for townsfolk who stroll about. */
+    wander: { heading: number; timer: number; walking: boolean } | null;
   }
   let villagers: Villager[] = [];
   let villageShown: Village | null = null;
@@ -730,7 +759,7 @@ async function createGame(assets: Assets): Promise<Game> {
     const models = await Promise.all(VILLAGERS.map((def) => loadModel(`char/${def.model}.glb`)));
     if (token !== villageToken) return;
     VILLAGERS.forEach((def, i) => {
-      const actor = new Actor(models[i].scene, assets.clips, ['Idle_A', 'Waving']);
+      const actor = new Actor(models[i].scene, assets.clips, ['Idle_A', 'Waving', 'Walking_A']);
       const x = v.x + def.dx;
       const z = v.z + def.dz;
       actor.root.position.set(x, groundAt(x, z), z);
@@ -740,7 +769,7 @@ async function createGame(assets: Assets): Promise<Game> {
       marker.scale.setScalar(1.4);
       actor.root.add(marker);
       scene.add(actor.root);
-      villagers.push({ actor, persona: def.persona, marker });
+      villagers.push({ actor, persona: def.persona, marker, wander: def.wander ? { heading: 0, timer: Math.random() * 3, walking: false } : null });
     });
   }
 
@@ -763,6 +792,27 @@ async function createGame(assets: Assets): Promise<Game> {
         diff = Math.atan2(Math.sin(diff), Math.cos(diff));
         person.actor.root.rotation.y += diff * Math.min(1, 6 * dt);
         person.actor.play('Waving');
+      } else if (person.wander && villageShown) {
+        // Stroll a few steps, stop a while, and never leave the village green.
+        const w = person.wander;
+        w.timer -= dt;
+        if (w.timer <= 0) {
+          w.walking = !w.walking;
+          w.timer = 2 + Math.random() * 4;
+          if (w.walking) w.heading = Math.random() * Math.PI * 2;
+        }
+        if (w.walking) {
+          const nx = p.x + Math.sin(w.heading) * 1.6 * dt;
+          const nz = p.z + Math.cos(w.heading) * 1.6 * dt;
+          if (Math.hypot(nx - villageShown.x, nz - villageShown.z) > 24) w.heading += Math.PI;
+          else p.set(nx, groundAt(nx, nz), nz);
+          let turn = w.heading - person.actor.root.rotation.y;
+          turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+          person.actor.root.rotation.y += turn * Math.min(1, 6 * dt);
+          person.actor.play('Walking_A');
+        } else {
+          person.actor.play('Idle_A');
+        }
       } else {
         person.actor.play('Idle_A');
       }
@@ -803,6 +853,11 @@ async function createGame(assets: Assets): Promise<Game> {
   function talkTo(persona: string): void {
     if (persona === 'shop') {
       openShop();
+      return;
+    }
+    // Townsfolk with no jobs to give just chat.
+    if (quests.state(persona) === 'none') {
+      chat.open(PERSONAS[persona]);
       return;
     }
     const result = quests.talk(persona);
@@ -979,52 +1034,73 @@ async function createGame(assets: Assets): Promise<Game> {
     return v !== null && v.kind === 'village' && Math.hypot(v.x - x, v.z - z) < VILLAGE_RADIUS + 55;
   };
 
+  /** Our id in the room; 'me' when playing alone. */
+  let selfId = 'me';
+  /** Whether skeletons may go for us right now. */
+  let targetable = true;
+  let netEnemyTimer = 0;
+
+  /** A skeleton's blow or orb landed on us. */
+  function hurt(from: { x: number; z: number }): void {
+    if (now < invulnerableUntil || !targetable) return;
+    invulnerableUntil = now + 1.2;
+    lastHurt = now;
+    hearts--;
+    sfx.ouch();
+    const away = Math.atan2(player.pos.x - from.x, player.pos.z - from.z);
+    knock.set(Math.sin(away) * 10, 0, Math.cos(away) * 10);
+    if (hero) busyUntil = now + hero.once('Hit_A', 1.5) * 0.7;
+    if (hearts <= 0) {
+      // Out of hearts: pop back to the last quiet spot, good as new.
+      hearts = maxHearts;
+      player.pos.copy(safeSpot);
+      player.vel.set(0, 0, 0);
+      knock.set(0, 0, 0);
+      enemies.clearNear(player.pos, 80);
+      speak('Oops! Let us try again!');
+    }
+    showHearts();
+  }
+
+  /** A skeleton was beaten. When friends play together, everyone in the room gets the prize. */
+  function reward(boss: boolean, fort: string): void {
+    if (boss) {
+      // The fort's giant skeleton: a big reward, and the fort stays won.
+      coins += 25;
+      bonusStars += 5;
+      if (fort) clearedForts.add(fort);
+      showCoins();
+      showStars(true);
+      sfx.win();
+      speak('You beat the giant skeleton! The fort is safe now.');
+      cheerUntil = now + 3;
+      dirty = true;
+      return;
+    }
+    coins++;
+    showCoins();
+    if (quests.add('skeletons', 1)) showQuests();
+    bonusStars++;
+    showStars(true);
+    sfx.star();
+    speak(String(starTotal()));
+    dirty = true;
+  }
+
   const enemyContext: EnemyContext = {
     isSafe,
-    targetable: true,
-    onHitPlayer(from) {
-      if (now < invulnerableUntil) return;
-      invulnerableUntil = now + 1.2;
-      lastHurt = now;
-      hearts--;
-      sfx.ouch();
-      const away = Math.atan2(player.pos.x - from.x, player.pos.z - from.z);
-      knock.set(Math.sin(away) * 10, 0, Math.cos(away) * 10);
-      if (hero) busyUntil = now + hero.once('Hit_A', 1.5) * 0.7;
-      if (hearts <= 0) {
-        // Out of hearts: pop back to the last quiet spot, good as new.
-        hearts = maxHearts;
-        player.pos.copy(safeSpot);
-        player.vel.set(0, 0, 0);
-        knock.set(0, 0, 0);
-        enemies.clearNear(player.pos, 80);
-        speak('Oops! Let us try again!');
-      }
-      showHearts();
+    onHit(targetId, from) {
+      if (targetId === selfId) hurt(from);
+      else net.send({ t: 'hit', to: targetId, x: from.x, z: from.z });
     },
     onDefeat(_at, boss) {
-      if (boss) {
-        // The fort's giant skeleton: a big reward, and the fort stays won.
-        coins += 25;
-        bonusStars += 5;
-        if (bossFort) clearedForts.add(bossFort);
-        bossFort = '';
-        showCoins();
-        showStars(true);
-        sfx.win();
-        speak('You beat the giant skeleton! The fort is safe now.');
-        cheerUntil = now + 3;
-        dirty = true;
-        return;
-      }
-      coins++;
-      showCoins();
-      if (quests.add('skeletons', 1)) showQuests();
-      bonusStars++;
-      showStars(true);
-      sfx.star();
-      speak(String(starTotal()));
-      dirty = true;
+      const fort = boss ? bossFort : '';
+      if (boss) bossFort = '';
+      reward(boss, fort);
+      net.send({ t: 'won', boss, fort });
+    },
+    sendDamage(id, amount, x, z) {
+      net.send({ t: 'dmg', id, n: amount, x, z });
     },
   };
 
@@ -1093,20 +1169,33 @@ async function createGame(assets: Assets): Promise<Game> {
       if (player.onGround && !driving && !enemies.nearest(player.pos, 45)) safeSpot.copy(player.pos);
     }
 
-    enemyContext.targetable = !flying && !driving && !chat.isOpen && !inside;
-    // Walking up to a fort that has not been won brings out its giant skeleton.
-    const fort = nearestVillage(player.pos.x, player.pos.z);
-    if (
-      fort?.kind === 'fort' &&
-      !clearedForts.has(fort.id) &&
-      !enemies.bossAlive &&
-      enemyContext.targetable &&
-      Math.hypot(fort.x - player.pos.x, fort.z - player.pos.z) < 60
-    ) {
-      bossFort = fort.id;
-      enemies.spawnBoss(fort.x + 10, fort.z + 10);
+    targetable = !flying && !driving && !chat.isOpen && !inside;
+    const targets: Target[] = [{ id: selfId, pos: player.pos, targetable }, ...peers.targets()];
+    // When friends play together, the player with the lowest id runs the skeletons for everyone;
+    // the others show the same skeletons and report their hits.
+    enemies.remote = net.connected && peers.ids().some((id) => id < selfId);
+    if (!enemies.remote) {
+      // Anyone walking up to a fort that has not been won brings out its giant skeleton.
+      for (const t of targets) {
+        const fort = nearestVillage(t.pos.x, t.pos.z);
+        if (
+          fort?.kind === 'fort' &&
+          t.targetable &&
+          !clearedForts.has(fort.id) &&
+          !enemies.bossAlive &&
+          Math.hypot(fort.x - t.pos.x, fort.z - t.pos.z) < 60
+        ) {
+          bossFort = fort.id;
+          enemies.spawnBoss(fort.x + 10, fort.z + 10);
+        }
+      }
     }
-    enemies.update(dt, player.pos, enemyContext);
+    enemies.update(dt, targets, enemyContext);
+    netEnemyTimer -= dt;
+    if (!enemies.remote && net.connected && netEnemyTimer <= 0) {
+      netEnemyTimer = 0.12;
+      net.send({ t: 'en', ...enemies.snapshot() });
+    }
   }
 
   // ---- building, or swinging if a weapon is in hand ----
@@ -1371,7 +1460,7 @@ async function createGame(assets: Assets): Promise<Game> {
       const icon = v.kind === 'village' ? '🏠' : clearedForts.has(v.id) ? '🏳️' : '🏰';
       icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
     }
-    for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: '🙂', pin: true });
+    for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
     miniMap.update(dt, who.x, who.z, camYaw, driving ? carHeading : facing, icons);
   }
 
@@ -1410,6 +1499,8 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          host: !enemies.remote,
+          selfId,
         }),
         quests,
         animals,
@@ -1461,6 +1552,9 @@ async function createGame(assets: Assets): Promise<Game> {
         netTimer -= dt;
         if (net.connected && netTimer <= 0) {
           netTimer = 0.1;
+          // Show who is here: our own face, then our friends'.
+          const here = `✅ ${faceFor(selfId)} ${peers.faces()}`;
+          if (roomStatus.textContent !== here) roomStatus.textContent = here;
           net.send({
             t: 's',
             x: +who.x.toFixed(2),
@@ -1469,6 +1563,7 @@ async function createGame(assets: Assets): Promise<Game> {
             f: +(driving ? carHeading : facing).toFixed(2),
             a: hero?.playing ?? 'Idle_A',
             h: CHARACTERS[heroIndex],
+            g: targetable ? 1 : 0,
           });
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
@@ -1496,6 +1591,7 @@ async function createGame(assets: Assets): Promise<Game> {
       animals.update(dt, who);
       pet?.update(dt, inside ?? who);
       peers.update(dt);
+      if (selfBubble.visible && now > emoteUntil) selfBubble.visible = false;
       updateVillagers(dt, who);
       for (const s of terrain.stars) {
         const mesh = s.group.children[0];
