@@ -23,6 +23,7 @@ export interface PropLibrary {
   /** Village buildings, in the order of BUILDINGS. */
   buildings: PropDef[];
   buildingMaterial: THREE.Material;
+  chest: THREE.Object3D;
 }
 
 export interface AnimatedModel {
@@ -42,7 +43,12 @@ export interface Assets {
 
 export const CHARACTERS = ['Rogue', 'Knight', 'Mage', 'Barbarian', 'Ranger', 'Druid', 'Engineer'];
 /** The well comes first: it marks the middle of every village. */
-export const BUILDINGS = ['well', 'home_A', 'home_B', 'tavern', 'market', 'blacksmith', 'windmill', 'church', 'townhall', 'tower_A', 'stables'];
+export const BUILDINGS = [
+  ...['well', 'home_A', 'home_B', 'tavern', 'market', 'blacksmith', 'windmill', 'church', 'townhall', 'tower_A', 'stables'].map((n) => `building_${n}_blue`),
+  // Skeleton forts are built from the red set; the castle comes first and stands in the middle.
+  ...['castle', 'tower_A', 'tower_B', 'tent', 'barracks', 'watchtower'].map((n) => `building_${n}_red`),
+];
+export const FORT_FIRST = 11;
 
 const TREES = ['Tree_1_A', 'Tree_1_B', 'Tree_2_A', 'Tree_2_B', 'Tree_3_A', 'Tree_4_A', 'Tree_4_B', 'Tree_5_A', 'Tree_6_A', 'Tree_7_A'];
 const ROCKS = ['Rock_1_A', 'Rock_1_H', 'Rock_2_A', 'Rock_2_E', 'Rock_3_A', 'Rock_3_H', 'Rock_4_A', 'Rock_5_A', 'Rock_6_A'];
@@ -50,7 +56,7 @@ const BUSHES = ['Bush_1_A', 'Bush_2_A', 'Bush_3_A', 'Bush_4_A'];
 const GRASS = ['Grass_1_A', 'Grass_1_B', 'Grass_2_A', 'Grass_2_B'];
 const ANIMS = ['MovementBasic', 'MovementAdvanced', 'General', 'Simulation', 'CombatMelee'];
 export const PETS = ['dog', 'cat', 'bunny', 'cow', 'deer', 'fox', 'pig', 'chick'];
-const ENEMIES = ['Skeleton_Minion', 'Skeleton_Warrior'];
+const ENEMIES = ['Skeleton_Minion', 'Skeleton_Warrior', 'Skeleton_Mage', 'Skeleton_Rogue'];
 
 /** Swap the loader's physically based materials for cheap ones that suit the art and tablets. */
 function simplify(root: THREE.Object3D): void {
@@ -121,7 +127,7 @@ function toPropDef(gltf: GLTF): PropDef {
 
 export async function loadAssets(onProgress: (fraction: number) => void): Promise<Assets> {
   const groups = [TREES, ROCKS, BUSHES, GRASS, ANIMS, PETS, ENEMIES, BUILDINGS];
-  const total = groups.reduce((n, g) => n + g.length, 0) + 2;
+  const total = groups.reduce((n, g) => n + g.length, 0) + 3;
   let done = 0;
   const load = async (path: string): Promise<GLTF> => {
     const gltf = await loadModel(path);
@@ -132,7 +138,7 @@ export async function loadAssets(onProgress: (fraction: number) => void): Promis
     Promise.all(names.map((n) => load(path(n))));
   const nature = (names: string[]): Promise<GLTF[]> => all(names, (n) => `nature/${n}_Color1.gltf`);
 
-  const [trees, rocks, bushes, grass, anims, pets, enemies, buildings, sword, staff] = await Promise.all([
+  const [trees, rocks, bushes, grass, anims, pets, enemies, buildings, sword, staff, chest] = await Promise.all([
     nature(TREES),
     nature(ROCKS),
     nature(BUSHES),
@@ -140,9 +146,10 @@ export async function loadAssets(onProgress: (fraction: number) => void): Promis
     all(ANIMS, (n) => `anim/${n}.glb`),
     all(PETS, (n) => `pets/animal-${n}.glb`),
     all(ENEMIES, (n) => `enemy/${n}.glb`),
-    all(BUILDINGS, (n) => `village/building_${n}_blue.gltf`),
+    all(BUILDINGS, (n) => `village/${n}.gltf`),
     load('weapon/sword_1handed.gltf'),
     load('weapon/staff.gltf'),
+    load('props/chest_gold.gltf'),
   ]);
 
   const clips = new Map<string, THREE.AnimationClip>();
@@ -158,6 +165,7 @@ export async function loadAssets(onProgress: (fraction: number) => void): Promis
       material: new THREE.MeshLambertMaterial({ map: firstMap(trees[0]) }),
       buildings: buildings.map(toPropDef),
       buildingMaterial: new THREE.MeshLambertMaterial({ map: firstMap(buildings[0]) }),
+      chest: chest.scene,
     },
     clips,
     pets: pets.map((p) => ({ scene: p.scene, clips: p.animations })),

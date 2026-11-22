@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { DurableObject } from 'cloudflare:workers';
 
 /**
  * OliverBlox AI helper: a tiny Cloudflare Worker that sits between the game and Claude.
@@ -13,6 +14,54 @@ interface Env {
   FAMILY_CODE: string;
   /** Comma-separated web addresses allowed to call this Worker. */
   ALLOWED_ORIGINS: string;
+  /** One relay per room name, for playing together. */
+  ROOMS: DurableObjectNamespace<Room>;
+}
+
+const MAX_PLAYERS = 8;
+const MAX_MESSAGE = 400_000;
+
+/**
+ * A room for playing together. It keeps nothing and understands nothing about the game:
+ * it only passes each player's messages on to the others in the same room.
+ */
+export class Room extends DurableObject<Env> {
+  async fetch(): Promise<Response> {
+    if (this.ctx.getWebSockets().length >= MAX_PLAYERS) return new Response('room full', { status: 429 });
+    const pair = new WebSocketPair();
+    const id = crypto.randomUUID().slice(0, 8);
+    this.ctx.acceptWebSocket(pair[1], [id]);
+    pair[1].send(JSON.stringify({ t: 'hello', id }));
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  private relay(from: WebSocket, text: string): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === from) continue;
+      try {
+        ws.send(text);
+      } catch {
+        // That player has gone; their close event tidies up.
+      }
+    }
+  }
+
+  webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+    if (typeof message !== 'string' || message.length > MAX_MESSAGE) return;
+    let msg: unknown;
+    try {
+      msg = JSON.parse(message);
+    } catch {
+      return;
+    }
+    if (typeof msg !== 'object' || msg === null || Array.isArray(msg)) return;
+    // Stamp who it came from, so nobody can speak as someone else.
+    this.relay(ws, JSON.stringify({ ...msg, from: this.ctx.getTags(ws)[0] }));
+  }
+
+  webSocketClose(ws: WebSocket): void {
+    this.relay(ws, JSON.stringify({ t: 'bye', from: this.ctx.getTags(ws)[0] }));
+  }
 }
 
 const MODEL = 'claude-haiku-5-5';
@@ -167,6 +216,17 @@ export default {
       : {};
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    // Playing together: a WebSocket to /room/<name>, guarded the same way as the chat.
+    const url = new URL(request.url);
+    const room = /^\/room\/([a-z0-9]{2,12})$/.exec(url.pathname);
+    if (room && request.headers.get('upgrade') === 'websocket') {
+      if (!allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403, cors);
+      if (!env.FAMILY_CODE || url.searchParams.get('key') !== env.FAMILY_CODE) {
+        return json({ error: 'wrong family code' }, 401, cors);
+      }
+      return env.ROOMS.get(env.ROOMS.idFromName(room[1])).fetch(request);
+    }
+
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/chat') {
       return json({ error: 'not found' }, 404, cors);
     }

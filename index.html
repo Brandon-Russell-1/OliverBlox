@@ -22,12 +22,29 @@
       <div id="quests"></div>
       <div id="shop" hidden></div>
       <div id="hearts"></div>
+      <button id="friends-btn" class="chip" aria-label="Play together">👫</button>
+      <button id="code-btn" class="chip" aria-label="Program Bolt">🧩</button>
       <button id="bolt-talk" class="chip" aria-label="Talk to Bolt">🤖💬</button>
       <button id="garage-btn" class="chip" aria-label="Vehicles">🚗</button>
       <button id="gear" aria-label="Grown-ups: hold for settings">⚙️</button>
       <div id="gear-hint" hidden>Grown-ups: press and hold for 2 seconds</div>
       <canvas id="map" aria-label="Map: tap to make it bigger"></canvas>
       <div id="garage" hidden></div>
+      <div id="friends" hidden>
+        <input id="room-code" maxlength="12" autocomplete="off" autocapitalize="off" placeholder="room name" />
+        <button id="room-join">▶️</button>
+        <span id="room-status"></span>
+      </div>
+      <div id="code" hidden>
+        <div id="code-strip"></div>
+        <div id="code-row">
+          <span id="code-palette"></span>
+          <button id="code-undo" aria-label="Undo">⌫</button>
+          <button id="code-repeat" aria-label="Repeat"></button>
+          <button id="code-run" aria-label="Run">▶️</button>
+          <button id="code-close" aria-label="Close">✖</button>
+        </div>
+      </div>
       <div id="bubble" hidden></div>
 
       <div id="hotbar"></div>

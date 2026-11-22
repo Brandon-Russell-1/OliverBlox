@@ -9,3 +9,12 @@ ALLOWED_ORIGINS = "https://brandonrussell.io,http://localhost:5173,http://localh
 # Two secrets are set separately so they never appear in this file or on GitHub:
 #   npx wrangler secret put ANTHROPIC_API_KEY
 #   npx wrangler secret put FAMILY_CODE
+
+# The relay for playing together. It runs on the free plan.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

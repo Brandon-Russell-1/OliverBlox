@@ -3,6 +3,9 @@ import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
 import { Terrain, groundAt, nearestVillage, villagesNear, SEA_LEVEL, VILLAGE_RADIUS, type Village } from './terrain';
 import { MiniMap, type MapIcon } from './map';
+import { Home, ROOM } from './home';
+import { Coder } from './coder';
+import { Net, Peers } from './net';
 import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
@@ -10,7 +13,7 @@ import { Animals, Pet, type Animal } from './animals';
 import { Quests, QUEST_ICONS, type QuestSave } from './quests';
 import { Actor } from './actor';
 import { Enemies, type EnemyContext } from './combat';
-import { Chat, PERSONAS, setupParentPanel } from './chat';
+import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio } from './audio';
 import { makeRobot, makeClouds } from './models';
 
@@ -56,20 +59,22 @@ interface GarageItem {
   name: string;
   kind: 'car' | 'boat';
   icon: string;
+  /** Coins to unlock it; 0 for the ones he starts with. */
+  price: number;
 }
 const GARAGE: GarageItem[] = [
-  { name: 'sedan', kind: 'car', icon: '🚗' },
-  { name: 'police', kind: 'car', icon: '🚓' },
-  { name: 'firetruck', kind: 'car', icon: '🚒' },
-  { name: 'taxi', kind: 'car', icon: '🚕' },
-  { name: 'tractor', kind: 'car', icon: '🚜' },
-  { name: 'race', kind: 'car', icon: '🏎️' },
-  { name: 'ambulance', kind: 'car', icon: '🚑' },
-  { name: 'truck', kind: 'car', icon: '🛻' },
-  { name: 'boat-speed-a', kind: 'boat', icon: '🚤' },
-  { name: 'boat-sail-a', kind: 'boat', icon: '⛵' },
-  { name: 'boat-row-small', kind: 'boat', icon: '🚣' },
-  { name: 'boat-tug-a', kind: 'boat', icon: '🛥️' },
+  { name: 'sedan', kind: 'car', icon: '🚗', price: 0 },
+  { name: 'taxi', kind: 'car', icon: '🚕', price: 6 },
+  { name: 'police', kind: 'car', icon: '🚓', price: 8 },
+  { name: 'tractor', kind: 'car', icon: '🚜', price: 8 },
+  { name: 'ambulance', kind: 'car', icon: '🚑', price: 10 },
+  { name: 'truck', kind: 'car', icon: '🛻', price: 10 },
+  { name: 'firetruck', kind: 'car', icon: '🚒', price: 12 },
+  { name: 'race', kind: 'car', icon: '🏎️', price: 20 },
+  { name: 'boat-row-small', kind: 'boat', icon: '🚣', price: 0 },
+  { name: 'boat-tug-a', kind: 'boat', icon: '🛥️', price: 10 },
+  { name: 'boat-sail-a', kind: 'boat', icon: '⛵', price: 12 },
+  { name: 'boat-speed-a', kind: 'boat', icon: '🚤', price: 15 },
 ];
 
 /** The people who live in every village: which hero model they use and where they stand. */
@@ -119,6 +124,10 @@ interface Save {
   /** Species of the pet, or -1 for none. */
   pet?: number;
   quests?: QuestSave;
+  /** Forts whose giant skeleton has been beaten. */
+  forts?: string[];
+  /** Vehicles unlocked in the garage. */
+  vehicles?: string[];
 }
 
 function loadSave(): Save | null {
@@ -213,6 +222,10 @@ let boots = save?.boots ?? false;
 let petSpecies = save?.pet ?? -1;
 let maxHearts = 5 + extraHearts;
 const quests = new Quests(save?.quests);
+const clearedForts = new Set<string>(save?.forts ?? []);
+const ownedVehicles = new Set<string>(save?.vehicles ?? GARAGE.filter((g) => g.price === 0).map((g) => g.name));
+/** While he is indoors, the spot outside the door to come back to. */
+let inside: THREE.Vector3 | null = null;
 const blocks = new Blocks(scene);
 if (save) blocks.load(save.blocks);
 
@@ -349,7 +362,7 @@ function setCrawling(on: boolean): void {
 }
 
 input.onFly = () => {
-  if (started && !driving) setFlying(!flying);
+  if (started && !driving && !inside) setFlying(!flying);
 };
 flyEl.addEventListener('pointerdown', (e) => {
   e.preventDefault();
@@ -400,7 +413,7 @@ function saveNow(): void {
     v: 2,
     blocks: blocks.save(),
     stars: [...collected],
-    player: [player.pos.x, player.pos.y, player.pos.z],
+    player: (inside ?? player.pos).toArray() as [number, number, number],
     car: [carPos.x, carPos.z, carHeading],
     vehicle: vehicleName,
     bonus: bonusStars,
@@ -410,6 +423,8 @@ function saveNow(): void {
     boots,
     pet: petSpecies,
     quests: quests.save(),
+    forts: [...clearedForts],
+    vehicles: [...ownedVehicles],
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
@@ -524,6 +539,130 @@ async function createGame(assets: Assets): Promise<Game> {
   $('prev').addEventListener('click', () => void setHero(heroIndex - 1));
   $('next').addEventListener('click', () => void setHero(heroIndex + 1));
 
+  // ---- house interiors ----
+  const home = new Home(scene);
+  const mapEl = $('map');
+  /** Standing by the door of a village house (the well does not count). */
+  const nearDoor = (): boolean =>
+    villageShown !== null &&
+    villageShown.buildings.some((b) => b.def > 0 && Math.hypot(b.x - player.pos.x, b.z - player.pos.z) < b.scale * 0.5 + 3.4);
+  function goInside(): void {
+    setFlying(false);
+    setCrawling(false);
+    inside = player.pos.clone();
+    player.pos.set(ROOM.x, ROOM.y, ROOM.z + ROOM.halfZ - 2.2);
+    player.vel.set(0, 0, 0);
+    facing = Math.PI;
+    camYaw = 0;
+    camTarget.copy(player.pos);
+    home.show(true);
+    mapEl.hidden = true;
+    attackEl.hidden = true;
+    sfx.door();
+  }
+  function goOutside(): void {
+    if (!inside) return;
+    player.pos.copy(inside);
+    camTarget.copy(player.pos);
+    inside = null;
+    home.show(false);
+    mapEl.hidden = false;
+    selectTool(tool);
+    sfx.door();
+  }
+
+  // ---- playing together: other players in the same room, and shared building ----
+  const net = new Net();
+  const peers = new Peers(scene, assets.clips);
+  const greeted = new Set<string>();
+  let netTimer = 0;
+  net.onMessage = (from, msg) => {
+    if (msg.t === 's') {
+      peers.set(from, msg);
+      // First sight of someone: show them everything built here so far.
+      if (!greeted.has(from)) {
+        greeted.add(from);
+        net.send({ t: 'B', list: blocks.save() });
+      }
+    } else if (msg.t === 'bye') {
+      peers.remove(from);
+      greeted.delete(from);
+    } else if (msg.t === 'b') {
+      if ([msg.x, msg.y, msg.z, msg.k].every(Number.isInteger)) blocks.set(msg.x, msg.y, msg.z, msg.k);
+      dirty = true;
+    } else if (msg.t === 'B' && Array.isArray(msg.list)) {
+      blocks.load(msg.list.slice(0, 5000).filter((b) => Array.isArray(b) && b.length === 4 && b.every(Number.isInteger)));
+      dirty = true;
+    }
+  };
+  const roomInput = $<HTMLInputElement>('room-code');
+  const roomStatus = $('room-status');
+  const roomJoin = $('room-join');
+  const friendsBtn = $('friends-btn');
+  net.onStatus = (on) => {
+    roomStatus.textContent = on ? '✅' : '';
+    roomJoin.textContent = on ? '⏹️' : '▶️';
+    friendsBtn.classList.toggle('on', on);
+    if (!on) {
+      peers.clear();
+      greeted.clear();
+    }
+  };
+  friendsBtn.addEventListener('click', () => {
+    $('friends').hidden = !$('friends').hidden;
+  });
+  roomJoin.addEventListener('click', () => {
+    if (net.connected) {
+      net.close();
+      return;
+    }
+    const room = roomInput.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const ai = getAiSettings();
+    roomInput.value = room;
+    // Playing together goes through the family's own helper, so that has to be set up first.
+    if (!ai.url) roomStatus.textContent = '⚙️';
+    else if (room.length < 2) roomStatus.textContent = '❓';
+    else {
+      roomStatus.textContent = '⏳';
+      net.connect(ai.url, ai.code, room);
+    }
+  });
+
+  // ---- program Bolt ----
+  let coding = false;
+  const codePos = new THREE.Vector3();
+  let codeTurns = 0;
+  const coder = new Coder({
+    origin: () => ({
+      x: Math.floor(player.pos.x + Math.sin(facing) * 2),
+      z: Math.floor(player.pos.z + Math.cos(facing) * 2),
+      turns: ((Math.round(facing / (Math.PI / 2)) % 4) + 4) % 4,
+    }),
+    move: (x, z, turns) => {
+      codePos.set(x + 0.5, groundAt(x + 0.5, z + 0.5), z + 0.5);
+      codeTurns = turns;
+    },
+    place: (x, z) => {
+      // On the ground, or on top of whatever is already stacked in that square.
+      let y = Math.ceil(groundAt(x + 0.5, z + 0.5) - 0.3);
+      while (blocks.has(x, y, z)) y++;
+      const k = tool >= FIRST_BLOCK ? HOTBAR[tool - FIRST_BLOCK] : HOTBAR[0];
+      if (!blocks.set(x, y, z, k)) return;
+      net.send({ t: 'b', x, y, z, k });
+      if (quests.add('blocks', 1)) showQuests();
+      sfx.place();
+      dirty = true;
+    },
+    running: (on) => {
+      coding = on;
+      if (on) sfx.chirp();
+      else sfx.win();
+    },
+  });
+  $('code-btn').addEventListener('click', () => {
+    if (!inside) coder.toggle();
+  });
+
   /** Until this time a one-shot animation (swing, cast, flinch) owns the hero's pose. */
   let busyUntil = 0;
   const animate = (name: string, speed = 1): void => {
@@ -607,7 +746,7 @@ async function createGame(assets: Assets): Promise<Game> {
 
   function updateVillagers(dt: number, who: THREE.Vector3): void {
     const v = nearestVillage(who.x, who.z);
-    const close = v && Math.hypot(v.x - who.x, v.z - who.z) < 170 ? v : null;
+    const close = v && v.kind === 'village' && Math.hypot(v.x - who.x, v.z - who.z) < 170 ? v : null;
     if (close !== villageShown) void showVillage(close);
     nearVillager = null;
     let best = 5;
@@ -735,9 +874,11 @@ async function createGame(assets: Assets): Promise<Game> {
 
   input.onAction = () => {
     if (!started) return;
-    if (driving) exitVehicle();
+    if (inside) goOutside();
+    else if (driving) exitVehicle();
     else if (nearVillager) talkTo(nearVillager.persona);
     else if (nearAnimal) befriend(nearAnimal);
+    else if (nearDoor()) goInside();
     else if (nearVehicle()) enterVehicle();
     dirty = true;
   };
@@ -763,28 +904,52 @@ async function createGame(assets: Assets): Promise<Game> {
     return null;
   }
 
-  for (const item of GARAGE) {
-    const b = document.createElement('button');
-    b.textContent = item.icon;
-    b.addEventListener('click', () => {
-      garageEl.hidden = true;
-      if (driving) exitVehicle();
-      const spot = findSpot(item.kind);
-      if (!spot) {
-        speak(item.kind === 'boat' ? 'Boats need water. Let us find the sea!' : 'Cars need dry land!');
-        return;
-      }
-      void setVehicle(item).then(() => {
-        carPos.copy(spot);
-        carHeading = facing;
-        enterVehicle();
-        sfx.honk();
-        dirty = true;
-      });
-    });
-    garageEl.appendChild(b);
+  /** Two vehicles are free; the rest are unlocked with coins, once, and kept. */
+  function renderGarage(): void {
+    garageEl.replaceChildren(
+      ...GARAGE.map((item) => {
+        const b = document.createElement('button');
+        b.append(item.icon);
+        if (!ownedVehicles.has(item.name)) {
+          const price = document.createElement('span');
+          price.textContent = `🪙${item.price}`;
+          b.append(price);
+          if (coins < item.price) b.className = 'poor';
+        }
+        b.addEventListener('click', () => {
+          if (!ownedVehicles.has(item.name)) {
+            if (coins < item.price) {
+              sfx.remove();
+              return;
+            }
+            coins -= item.price;
+            ownedVehicles.add(item.name);
+            showCoins();
+            sfx.win();
+            dirty = true;
+          }
+          garageEl.hidden = true;
+          if (inside) return;
+          if (driving) exitVehicle();
+          const spot = findSpot(item.kind);
+          if (!spot) {
+            speak(item.kind === 'boat' ? 'Boats need water. Let us find the sea!' : 'Cars need dry land!');
+            return;
+          }
+          void setVehicle(item).then(() => {
+            carPos.copy(spot);
+            carHeading = facing;
+            enterVehicle();
+            sfx.honk();
+            dirty = true;
+          });
+        });
+        return b;
+      }),
+    );
   }
   $('garage-btn').addEventListener('click', () => {
+    renderGarage();
     garageEl.hidden = !garageEl.hidden;
   });
 
@@ -796,6 +961,8 @@ async function createGame(assets: Assets): Promise<Game> {
   const knock = new THREE.Vector3();
   const safeSpot = player.pos.clone();
   let safeCheck = 0;
+  /** The fort whose giant skeleton is currently out. */
+  let bossFort = '';
 
   interface MagicBolt {
     mesh: THREE.Mesh;
@@ -809,7 +976,7 @@ async function createGame(assets: Assets): Promise<Game> {
   const isSafe = (x: number, z: number): boolean => {
     if (Math.hypot(x, z) < 110) return true;
     const v = nearestVillage(x, z);
-    return v !== null && Math.hypot(v.x - x, v.z - z) < VILLAGE_RADIUS + 55;
+    return v !== null && v.kind === 'village' && Math.hypot(v.x - x, v.z - z) < VILLAGE_RADIUS + 55;
   };
 
   const enemyContext: EnemyContext = {
@@ -835,7 +1002,21 @@ async function createGame(assets: Assets): Promise<Game> {
       }
       showHearts();
     },
-    onDefeat() {
+    onDefeat(_at, boss) {
+      if (boss) {
+        // The fort's giant skeleton: a big reward, and the fort stays won.
+        coins += 25;
+        bonusStars += 5;
+        if (bossFort) clearedForts.add(bossFort);
+        bossFort = '';
+        showCoins();
+        showStars(true);
+        sfx.win();
+        speak('You beat the giant skeleton! The fort is safe now.');
+        cheerUntil = now + 3;
+        dirty = true;
+        return;
+      }
       coins++;
       showCoins();
       if (quests.add('skeletons', 1)) showQuests();
@@ -848,7 +1029,7 @@ async function createGame(assets: Assets): Promise<Game> {
   };
 
   function attack(): void {
-    if (!started || driving || swimming || chat.isOpen || !hero || now < attackReady) return;
+    if (!started || driving || swimming || inside || chat.isOpen || !hero || now < attackReady) return;
     if (tool !== SWORD && tool !== STAFF) return;
     // Auto-aim: turn to the closest skeleton so small hands do not have to line it up.
     const target = enemies.nearest(player.pos, tool === SWORD ? 5.5 : 36);
@@ -912,14 +1093,26 @@ async function createGame(assets: Assets): Promise<Game> {
       if (player.onGround && !driving && !enemies.nearest(player.pos, 45)) safeSpot.copy(player.pos);
     }
 
-    enemyContext.targetable = !flying && !driving && !chat.isOpen;
+    enemyContext.targetable = !flying && !driving && !chat.isOpen && !inside;
+    // Walking up to a fort that has not been won brings out its giant skeleton.
+    const fort = nearestVillage(player.pos.x, player.pos.z);
+    if (
+      fort?.kind === 'fort' &&
+      !clearedForts.has(fort.id) &&
+      !enemies.bossAlive &&
+      enemyContext.targetable &&
+      Math.hypot(fort.x - player.pos.x, fort.z - player.pos.z) < 60
+    ) {
+      bossFort = fort.id;
+      enemies.spawnBoss(fort.x + 10, fort.z + 10);
+    }
     enemies.update(dt, player.pos, enemyContext);
   }
 
   // ---- building, or swinging if a weapon is in hand ----
   const ray = new THREE.Vector3();
   input.onTap = (px, py, button) => {
-    if (!started || driving) return;
+    if (!started || driving || inside) return;
     garageEl.hidden = true;
     shopEl.hidden = true;
     if ((tool === SWORD || tool === STAFF) && button !== 2) {
@@ -939,6 +1132,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     if (tool === PICKAXE || button === 2) {
       if (hit.kind === 'block' && blocks.set(hit.x, hit.y, hit.z, 0)) {
+        net.send({ t: 'b', x: hit.x, y: hit.y, z: hit.z, k: 0 });
         sfx.remove();
         dirty = true;
       }
@@ -946,6 +1140,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     if (bodyTouchesCell(player, hit.px, hit.py, hit.pz)) return;
     if (blocks.set(hit.px, hit.py, hit.pz, HOTBAR[tool - FIRST_BLOCK])) {
+      net.send({ t: 'b', x: hit.px, y: hit.py, z: hit.pz, k: HOTBAR[tool - FIRST_BLOCK] });
       if (quests.add('blocks', 1)) showQuests();
       sfx.place();
       dirty = true;
@@ -970,7 +1165,15 @@ async function createGame(assets: Assets): Promise<Game> {
     const ground = groundAt(pos.x, pos.z);
     const before = pos.clone();
 
-    if (flying) {
+    if (inside) {
+      // Indoors: a flat floor and four walls.
+      vel.set(mx * WALK_SPEED, 0, mz * WALK_SPEED);
+      pos.addScaledVector(vel, dt);
+      home.clamp(pos, 0.7, 0);
+      pos.y = ROOM.y;
+      player.onGround = true;
+      swimming = false;
+    } else if (flying) {
       // God mode: no gravity, no walls, straight over mountains and sea.
       const speed = FLY_SPEED * (input.run ? 2 : 1);
       vel.set(mx * speed, ((input.jump ? 1 : 0) - (input.down ? 1 : 0)) * 11, mz * speed);
@@ -1110,13 +1313,14 @@ async function createGame(assets: Assets): Promise<Game> {
     camWant.copy(who).setY(who.y + (driving ? 2.6 : crawling ? 1 : started ? 1.9 : 1.3));
     camTarget.lerp(camWant, Math.min(1, 12 * dt));
     // Close up on the hero while choosing one on the start screen.
-    const dist = !started ? 6.5 : driving ? camDist + 4 : camDist;
+    const dist = !started ? 6.5 : inside ? 7 : driving ? camDist + 4 : camDist;
     const pitch = started ? camPitch : 0.12;
     camOffset.set(Math.sin(camYaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(camYaw) * Math.cos(pitch));
     camera.position.copy(camTarget).addScaledVector(camOffset, dist);
     // Never let the camera sink into a hillside or under the sea.
     const floor = Math.max(groundAt(camera.position.x, camera.position.z), SEA_LEVEL) + 0.6;
     if (camera.position.y < floor) camera.position.y = floor;
+    if (inside) home.clamp(camera.position, 0.5, 0.6);
     camera.lookAt(camTarget);
   }
 
@@ -1128,9 +1332,11 @@ async function createGame(assets: Assets): Promise<Game> {
       who.y + 1.5 + Math.sin(now * 2.4) * 0.15,
       who.z - Math.sin(camYaw) * side - Math.cos(camYaw) * 0.8,
     );
+    // While running a program, Bolt goes where the commands send him.
+    if (coding) boltWant.set(codePos.x, codePos.y + 1.4, codePos.z);
     if (robot.position.distanceTo(boltWant) > 80) robot.position.copy(boltWant);
-    robot.position.lerp(boltWant, Math.min(1, 4 * dt));
-    robot.rotation.y = Math.atan2(who.x - robot.position.x, who.z - robot.position.z);
+    robot.position.lerp(boltWant, Math.min(1, (coding ? 12 : 4) * dt));
+    robot.rotation.y = coding ? (codeTurns * Math.PI) / 2 : Math.atan2(who.x - robot.position.x, who.z - robot.position.z);
 
     boltHead.copy(robot.position).setY(robot.position.y + 1.7).project(camera);
     const show = now < bubbleUntil && boltHead.z < 1 && !chat.isOpen;
@@ -1151,8 +1357,21 @@ async function createGame(assets: Assets): Promise<Game> {
     for (const s of terrain.stars) icons.push({ x: s.pos.x, z: s.pos.z, icon: '⭐' });
     if (!driving) icons.push({ x: carPos.x, z: carPos.z, icon: vehicleKind === 'boat' ? '⛵' : '🚗' });
     // Only the closest village is pinned to the rim, so the arrow to follow is never in doubt.
-    const closest = nearestVillage(who.x, who.z);
-    for (const v of villagesNear(who.x, who.z)) icons.push({ x: v.x, z: v.z, icon: '🏠', pin: v === closest });
+    const places = villagesNear(who.x, who.z);
+    let closest: Village | null = null;
+    let best = Infinity;
+    for (const v of places) {
+      const d = Math.hypot(v.x - who.x, v.z - who.z);
+      if (v.kind === 'village' && d < best) {
+        best = d;
+        closest = v;
+      }
+    }
+    for (const v of places) {
+      const icon = v.kind === 'village' ? '🏠' : clearedForts.has(v.id) ? '🏳️' : '🏰';
+      icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
+    }
+    for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: '🙂', pin: true });
     miniMap.update(dt, who.x, who.z, camYaw, driving ? carHeading : facing, icons);
   }
 
@@ -1166,6 +1385,7 @@ async function createGame(assets: Assets): Promise<Game> {
         nearestVillage,
         enemies,
         enemyContext,
+        terrain,
         state: () => ({
           flying,
           crawling,
@@ -1185,6 +1405,11 @@ async function createGame(assets: Assets): Promise<Game> {
           pet: petSpecies,
           swordLevel,
           maxHearts,
+          inside: inside !== null,
+          peers: peers.count,
+          forts: clearedForts.size,
+          owned: ownedVehicles.size,
+          online: net.connected,
         }),
         quests,
         animals,
@@ -1222,11 +1447,35 @@ async function createGame(assets: Assets): Promise<Game> {
           dirty = true;
         }
 
+        const opened = terrain.openChests(who, 2.8);
+        if (opened > 0) {
+          coins += opened * 8;
+          showCoins();
+          sfx.win();
+          speak('Treasure! Eight coins!');
+          cheerUntil = now + 2;
+          dirty = true;
+        }
+        coder.update(dt);
+        // Tell the other players where we are, ten times a second.
+        netTimer -= dt;
+        if (net.connected && netTimer <= 0) {
+          netTimer = 0.1;
+          net.send({
+            t: 's',
+            x: +who.x.toFixed(2),
+            y: +who.y.toFixed(2),
+            z: +who.z.toFixed(2),
+            f: +(driving ? carHeading : facing).toFixed(2),
+            a: hero?.playing ?? 'Idle_A',
+            h: CHARACTERS[heroIndex],
+          });
+        }
         nearAnimal = animals.nearest(player.pos, 4.5);
         // The shop shuts when he walks away from the shopkeeper.
         if (!shopEl.hidden && nearVillager?.persona !== 'shop') shopEl.hidden = true;
         const talk = nearVillager?.persona === 'shop' ? '🛒' : '💬';
-        const icon = driving ? '🚶' : nearVillager ? talk : nearAnimal ? '🐾' : nearVehicle() ? (vehicleKind === 'boat' ? '⛵' : '🚗') : '';
+        const icon = inside ? '🚪' : driving ? '🚶' : nearVillager ? talk : nearAnimal ? '🐾' : nearDoor() ? '🚪' : nearVehicle() ? (vehicleKind === 'boat' ? '⛵' : '🚗') : '';
         if (icon !== actionShown) {
           actionShown = icon;
           actionEl.hidden = icon === '';
@@ -1245,7 +1494,8 @@ async function createGame(assets: Assets): Promise<Game> {
       const who = driving ? carPos : player.pos;
       terrain.update(who.x, who.z, 2);
       animals.update(dt, who);
-      pet?.update(dt, who);
+      pet?.update(dt, inside ?? who);
+      peers.update(dt);
       updateVillagers(dt, who);
       for (const s of terrain.stars) {
         const mesh = s.group.children[0];
@@ -1254,7 +1504,7 @@ async function createGame(assets: Assets): Promise<Game> {
       }
       updateCamera(dt, who);
       updateBolt(dt, who);
-      if (started) updateMap(dt, who);
+      if (started && !inside) updateMap(dt, who);
 
       // Sky, sea, clouds and the sun's shadow all travel with the player.
       sky.position.copy(camera.position);

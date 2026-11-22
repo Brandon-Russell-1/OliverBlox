@@ -21,6 +21,13 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 | Vehicles | Car button (top right) gives any car or boat | Same; E gets in and out |
 | Talk, shop, befriend | Robot button for Bolt; the yellow button near a villager, shopkeeper or animal | Same; E for the yellow button |
 
+- **Forts:** the 🏰 on the map is a skeleton fort. Walking up to it brings out a giant skeleton; beating it pays 25 coins and 5 stars, and the fort stays won (🏳️).
+- **More bad guys:** quick rogues that outrun a walk, and mages that throw slow purple orbs he can sidestep.
+- **Treasure:** gold chests are hidden out in the wilds; walking into one gives 8 coins.
+- **Houses:** stand by a village house and tap the door button to go inside; tap it again to leave.
+- **Garage unlocks:** the car and the rowing boat are free; the rest are bought once with coins.
+- **Program Bolt:** the puzzle button opens a strip of picture commands (forward, turn left, turn right, place a block). Line some up, pick how many times to repeat, press play, and Bolt carries them out. It builds with whichever colour is selected.
+- **Play together:** the two-people button asks for a room name. Everyone who types the same name is in the same world, sees each other, and builds together. It needs the AI helper set up (see below), because it runs through your own Cloudflare Worker.
 - **Map:** the round map in the top right turns with the view, so up on the map is straight ahead. The 🏠 on its rim points to the nearest village. Tap the map to make it big.
 - **Quests:** villagers with a ❗ over their head have a job (find stars, bonk skeletons, build with blocks, befriend an animal). Chips on the left show progress; go back when they show 🎁 to collect coins.
 - **Shop:** the villager with the 🛒 sells an axe, a great sword, extra hearts and running shoes for coins. Skeletons drop a coin each too.
@@ -49,9 +56,9 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 1. Open world: endless terrain, heroes, vehicles, animals, building, stars (done)
 2. Villages, weapons and skeletons, garage, talking characters (done)
 3. Quests, shop and pets (done)
-4. Enterable houses, more shop items, block coding
-5. Invite-code multiplayer
+4. Forts, treasure, house interiors, garage unlocks, program Bolt, playing together (done)
+5. Shared enemies and quests when playing together; more places to find
 
 ## Credits
 
-3D models are CC0 (public domain): heroes, skeletons, weapons, animations, forest scenery and village buildings by [Kay Lousberg](https://www.kaylousberg.com), vehicles and animals by [Kenney](https://kenney.nl).
+3D models are CC0 (public domain): heroes, skeletons, weapons, animations, forest scenery and village and fort buildings, furniture and treasure chests by [Kay Lousberg](https://www.kaylousberg.com), vehicles and animals by [Kenney](https://kenney.nl).

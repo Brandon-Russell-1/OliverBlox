@@ -330,6 +330,108 @@ body:not(.touch) #fly {
   right: calc(124px + env(safe-area-inset-right));
 }
 
+#code-btn {
+  right: calc(214px + env(safe-area-inset-right));
+}
+
+#friends-btn {
+  right: calc(274px + env(safe-area-inset-right));
+}
+
+.chip.on {
+  background: #7df0a0;
+  border-color: #fff;
+}
+
+#garage button span {
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  color: #1c2a6b;
+}
+
+#garage button {
+  line-height: 1;
+}
+
+#garage button.poor {
+  opacity: 0.5;
+}
+
+#friends {
+  position: fixed;
+  z-index: 6;
+  top: calc(70px + env(safe-area-inset-top));
+  right: calc(180px + env(safe-area-inset-right));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(20, 30, 80, 0.8);
+  color: #fff;
+  font-size: 22px;
+}
+
+#friends input {
+  width: 150px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  font: 18px system-ui, sans-serif;
+  touch-action: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#friends button,
+#code button {
+  min-width: 52px;
+  height: 52px;
+  padding: 0 8px;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 26px;
+}
+
+#code {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(20, 30, 80, 0.85);
+  z-index: 4;
+}
+
+#code-strip {
+  min-height: 44px;
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 28px;
+  letter-spacing: 2px;
+}
+
+#code-row,
+#code-palette {
+  display: flex;
+  gap: 8px;
+}
+
+#code #code-run {
+  background: #3ddc5b;
+}
+
+#friends[hidden],
+#code[hidden],
+#map[hidden] {
+  display: none;
+}
+
 #garage-btn {
   right: calc(64px + env(safe-area-inset-right));
 }

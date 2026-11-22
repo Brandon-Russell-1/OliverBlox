@@ -85,6 +85,18 @@ Open a terminal in the project's `worker` folder for all of these.
 - **Change the rules.** Edit the `RULES` text or the character descriptions in `worker/src/index.ts`, then run `npx wrangler deploy`.
 - **Turn it off.** Clear the address in the grown-ups panel on a device, or delete the Worker from the Cloudflare dashboard.
 
+## Playing together
+
+The same Worker also runs the rooms for playing together, at no extra cost: it is included in Cloudflare's free plan.
+
+- On each device, set up the AI helper address and family code as in step 6.
+- In the game, tap the two-people button, type a room name (letters and numbers), and press play. A green tick means you are in.
+- Everyone who enters the same room name, with the same family code, shares the world. Up to 8 players per room.
+
+Only people who have both your Worker's address and your family code can join, so there are no strangers. The room passes messages between players and stores nothing.
+
+What is shared: where each player is, which hero they chose, and every block built. What is not shared yet: skeletons, stars, quests, coins and pets are each player's own.
+
 ## Troubleshooting
 
 | Transcript shows | Meaning | Fix |

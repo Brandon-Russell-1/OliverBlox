@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { fbm, hash2, smoothstep, mulberry32 } from './noise';
-import { BUILDINGS, type PropDef, type PropLibrary } from './assets';
+import { BUILDINGS, FORT_FIRST, type PropDef, type PropLibrary } from './assets';
 import { makeStar } from './models';
 
 /** Chunk edge in metres, and how many terrain cells run along it. */
@@ -38,6 +38,10 @@ export interface Building {
 }
 
 export interface Village {
+  /** Stable name for this place, used to remember which forts have been won. */
+  id: string;
+  /** A friendly village, or a fort held by skeletons. */
+  kind: 'village' | 'fort';
   x: number;
   z: number;
   h: number;
@@ -57,23 +61,30 @@ function villageIn(rx: number, rz: number): Village | null {
 
   let village: Village | null = null;
   const home = rx === 0 && rz === 0;
-  // The first village is always a short walk from where the game starts.
-  const x = home ? 80 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
-  const z = home ? 75 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
+  const firstFort = rx === -1 && rz === 0;
+  // The first village and the first fort are always a short walk from where the game starts.
+  const x = home ? 80 : firstFort ? -150 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
+  const z = home ? 75 : firstFort ? 40 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
   const h = baseHeight(x, z);
-  if (home || (hash2(rx, rz, 71) < 0.6 && h > 3 && h < 22)) {
-    const buildings: Building[] = [{ def: 0, x, z, rot: 0, scale: BUILDING_SCALE * 0.6 }];
-    const n = 6 + Math.floor(hash2(rx, rz, 74) * 3);
+  const buildable = h > 3 && h < 22;
+  const roll = hash2(rx, rz, 71);
+  const kind = home ? 'village' : firstFort ? 'fort' : !buildable ? null : roll < 0.6 ? 'village' : roll < 0.9 ? 'fort' : null;
+  if (kind) {
+    // Villages use the blue buildings and forts the red ones; the first of each set stands in the middle.
+    const first = kind === 'fort' ? FORT_FIRST : 0;
+    const others = (kind === 'fort' ? BUILDINGS.length : FORT_FIRST) - first - 1;
+    const buildings: Building[] = [{ def: first, x, z, rot: 0, scale: BUILDING_SCALE * 0.6 }];
+    const n = kind === 'fort' ? 5 : 6 + Math.floor(hash2(rx, rz, 74) * 3);
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + hash2(rx + i * 31, rz, 75) * 0.3;
       const r = 26 + hash2(rx + i * 31, rz, 76) * 7;
       const bx = x + Math.sin(a) * r;
       const bz = z + Math.cos(a) * r;
-      const def = 1 + Math.floor(hash2(rx + i * 31, rz, 77) * (BUILDINGS.length - 1));
-      // Every building faces the well in the middle.
+      const def = first + 1 + Math.floor(hash2(rx + i * 31, rz, 77) * others);
+      // Every building faces the middle.
       buildings.push({ def, x: bx, z: bz, rot: Math.atan2(x - bx, z - bz), scale: BUILDING_SCALE });
     }
-    village = { x, z, h, buildings };
+    village = { id: key, kind, x, z, h: Math.max(h, 3), buildings };
   }
   villages.set(key, village);
   return village;
@@ -196,6 +207,7 @@ interface Chunk {
   buildings: THREE.Mesh | null;
   colliders: Collider[];
   star: Star | null;
+  chest: Star | null;
 }
 
 interface Placement {
@@ -220,6 +232,7 @@ export class Terrain {
   private chunks = new Map<string, Chunk>();
   private readonly groundMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
   readonly stars: Star[] = [];
+  readonly chests: Star[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -394,6 +407,26 @@ export class Terrain {
       }
     }
 
+    // ---- treasure chest, out in the wilds ----
+    let chest: Star | null = null;
+    const chestId = `c${id}`;
+    if (hash2(cx, cz, 131) < 0.14 && !this.collected.has(chestId)) {
+      const x = ox + 6 + rng() * (CHUNK - 12);
+      const z = oz + 6 + rng() * (CHUNK - 12);
+      const h = groundAt(x, z);
+      if (h > 1.5 && Math.hypot(x, z) > 40 && !inVillage(x, z)) {
+        const group = new THREE.Group();
+        const model = this.props.chest.clone(true);
+        model.scale.setScalar(1.4);
+        group.add(model);
+        group.position.set(x, h, z);
+        group.rotation.y = rng() * Math.PI * 2;
+        this.scene.add(group);
+        chest = { id: chestId, group, pos: group.position };
+        this.chests.push(chest);
+      }
+    }
+
     this.chunks.set(id, {
       cx,
       cz,
@@ -402,6 +435,7 @@ export class Terrain {
       buildings: this.bake(built, this.props.buildingMaterial),
       colliders,
       star,
+      chest,
     });
   }
 
@@ -453,6 +487,7 @@ export class Terrain {
       mesh.geometry.dispose();
     }
     if (c.star) this.removeStar(c.star);
+    if (c.chest) this.removeChest(c.chest);
   }
 
   private removeStar(star: Star): void {
@@ -471,6 +506,28 @@ export class Terrain {
         const chunk = this.chunks.get(s.id);
         if (chunk) chunk.star = null;
         this.removeStar(s);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  private removeChest(chest: Star): void {
+    this.scene.remove(chest.group);
+    const i = this.chests.indexOf(chest);
+    if (i >= 0) this.chests.splice(i, 1);
+  }
+
+  /** Open any treasure chest within reach. Returns how many were opened. */
+  openChests(pos: THREE.Vector3, reach: number): number {
+    let n = 0;
+    for (let i = this.chests.length - 1; i >= 0; i--) {
+      const c = this.chests[i];
+      if (Math.hypot(c.pos.x - pos.x, c.pos.z - pos.z) < reach && Math.abs(c.pos.y - pos.y) < 5) {
+        this.collected.add(c.id);
+        const chunk = this.chunks.get(c.id.slice(1));
+        if (chunk) chunk.chest = null;
+        this.removeChest(c);
         n++;
       }
     }
