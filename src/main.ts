@@ -126,6 +126,12 @@ interface Save {
   /** The hat being worn, or ''. */
   hat?: string;
   fish?: number;
+  /** Things picked up along the way, by kind. */
+  bag?: Record<string, number>;
+  /** How far through the guided adventure he is. */
+  guide?: number;
+  shopSeen?: boolean;
+  raced?: boolean;
 }
 
 function loadSave(): Save | null {
@@ -278,6 +284,16 @@ const furniture = new Set<string>(save?.furniture ?? []);
 const hatsOwned = new Set<string>(save?.hats ?? []);
 let hat = save?.hat ?? '';
 let fishCount = save?.fish ?? 0;
+/** What can be carried and sold, and what the market pays for one. */
+const ITEMS = [
+  { key: 'fish', icon: '🐟', price: 2 },
+  { key: 'bone', icon: '🦴', price: 1 },
+  { key: 'gem', icon: '💎', price: 6 },
+];
+const bag: Record<string, number> = { fish: 0, bone: 0, gem: 0, ...save?.bag };
+let guideStep = save?.guide ?? 0;
+let shopSeen = save?.shopSeen ?? false;
+let raced = save?.raced ?? false;
 /** While he is indoors, the spot outside the door to come back to. */
 let inside: THREE.Vector3 | null = null;
 const blocks = new Blocks(scene);
@@ -514,6 +530,10 @@ function saveNow(): void {
     hats: [...hatsOwned],
     hat,
     fish: fishCount,
+    bag,
+    guide: guideStep,
+    shopSeen,
+    raced,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
@@ -846,6 +866,8 @@ async function createGame(assets: Assets): Promise<Game> {
     if (chests > 0) {
       chestsOpened += chests;
       coins += chests * 8;
+      bag.gem += chests;
+      showBag();
       showCoins();
       sfx.win();
       speak('Treasure! Eight coins!');
@@ -1094,7 +1116,27 @@ async function createGame(assets: Assets): Promise<Game> {
     furnitureItem('🍽️', 'table', 10),
   ];
   function renderShop(): void {
+    // Top of the market: one button for each kind of thing he is carrying. A tap sells one.
+    const selling = ITEMS.filter((item) => bag[item.key] > 0).map((item) => {
+      const b = document.createElement('button');
+      b.className = 'sell';
+      const price = document.createElement('span');
+      price.textContent = `×${bag[item.key]} ➜ 🪙${item.price}`;
+      b.append(item.icon, price);
+      b.addEventListener('click', () => {
+        if (bag[item.key] <= 0) return;
+        bag[item.key]--;
+        coins += item.price;
+        showCoins();
+        showBag();
+        sfx.coin();
+        dirty = true;
+        renderShop();
+      });
+      return b;
+    });
     shopEl.replaceChildren(
+      ...selling,
       ...SHOP.map((item) => {
         const b = document.createElement('button');
         const owned = item.owned();
@@ -1128,7 +1170,8 @@ async function createGame(assets: Assets): Promise<Game> {
   function openShop(): void {
     renderShop();
     shopEl.hidden = false;
-    speak('Welcome to my shop! Coins buy better gear.', { pitch: 1.15, rate: 0.95 });
+    shopSeen = true;
+    speak('Welcome to the market! Tap the top row to sell what is in your bag. Tap the rest to buy.', { pitch: 1.15, rate: 0.95 });
   }
 
   // ---- pet: a befriended animal that follows along ----
@@ -1305,7 +1348,9 @@ async function createGame(assets: Assets): Promise<Game> {
       return;
     }
     coins++;
+    bag.bone++;
     showCoins();
+    showBag();
     if (quests.add('skeletons', 1)) showQuests();
     bonusStars++;
     showStars(true);
@@ -1731,6 +1776,7 @@ async function createGame(assets: Assets): Promise<Game> {
       return;
     }
     // Faster is worth more, but finishing always pays.
+    raced = true;
     const prize = Math.max(3, 14 - Math.floor(seconds / 6));
     coins += prize;
     showCoins();
@@ -1771,10 +1817,10 @@ async function createGame(assets: Assets): Promise<Game> {
       return;
     }
     fishCount++;
-    coins += 2;
-    showCoins();
+    bag.fish++;
+    showBag();
     sfx.coin();
-    speak(`You caught a fish! That makes ${fishCount}.`);
+    speak(`You caught a fish! It is in your bag. You can sell it at the market.`);
     cheerUntil = now + 2;
     dirty = true;
   }
@@ -1922,6 +1968,8 @@ async function createGame(assets: Assets): Promise<Game> {
         clearedForts.add(maze.id);
         const deep = maze.kind === 'dungeon';
         coins += deep ? 40 : 20;
+        bag.gem += deep ? 4 : 2;
+        showBag();
         bonusStars += deep ? 6 : 3;
         showCoins();
         showStars(true);
@@ -1972,10 +2020,141 @@ async function createGame(assets: Assets): Promise<Game> {
     updateLetters(who);
   }
 
+  // ---- the bag: what he is carrying and what he owns ----
+  const bagEl = $('bag');
+  const zoomEl = $('map-zoom');
+  function showBag(): void {
+    if (bagEl.hidden) return;
+    const cell = (icon: string, label: string, onTap?: () => void, lit = false): HTMLElement => {
+      const b = document.createElement('button');
+      const text = document.createElement('span');
+      text.textContent = label;
+      b.append(icon, text);
+      if (lit) b.className = 'on';
+      if (onTap) b.addEventListener('click', onTap);
+      return b;
+    };
+    const hatIcons: Record<string, string> = { party: '🥳', top: '🎩', crown: '👑' };
+    bagEl.replaceChildren(
+      ...ITEMS.map((item) => cell(item.icon, `×${bag[item.key]}`)),
+      cell(['🗡️', '🪓', '⚔️'][swordLevel], '✓'),
+      cell('🪄', '✓'),
+      ...(boots ? [cell('👟', '✓')] : []),
+      // Hats can be put on and taken off straight from the bag.
+      ...[...hatsOwned].map((key) =>
+        cell(hatIcons[key] ?? '🎩', hat === key ? '✓' : '', () => {
+          hat = hat === key ? '' : key;
+          wearHat();
+          dirty = true;
+          sfx.place();
+          showBag();
+        }, hat === key),
+      ),
+    );
+  }
+  $('bag-btn').addEventListener('click', () => {
+    bagEl.hidden = !bagEl.hidden;
+    showBag();
+  });
+
+  // ---- the guide: one goal at a time, an arrow to it, and Bolt to explain ----
+  interface Step {
+    icon: string;
+    say: string;
+    target(): { x: number; z: number } | null;
+    done(): boolean;
+  }
+  const homeVillage = nearestVillage(80, 75);
+  const firstFort = nearestVillage(-150, 40);
+  const firstMaze = nearestVillage(70, -150);
+  const firstCave = nearestVillage(-70, -150);
+  const firstDungeon = firstCave ? linkedPlace(firstCave) : null;
+  const offset = (v: Village | null, dx: number, dz: number): { x: number; z: number } | null =>
+    v ? { x: v.x + dx, z: v.z + dz } : null;
+  const nearestStar = (): { x: number; z: number } | null => {
+    let best: { x: number; z: number } | null = null;
+    let bestDist = Infinity;
+    for (const s of terrain.stars) {
+      const d = Math.hypot(s.pos.x - player.pos.x, s.pos.z - player.pos.z);
+      if (d < bestDist) {
+        best = s.pos;
+        bestDist = d;
+      }
+    }
+    return best;
+  };
+  const STEPS: Step[] = [
+    { icon: '⭐', say: 'Let us find a star! Follow the arrow at the top.', target: nearestStar, done: () => starTotal() >= 1 },
+    { icon: '🏠', say: 'Great! Now let us visit the village.', target: () => offset(homeVillage, 0, 0), done: () => !!homeVillage && Math.hypot(homeVillage.x - player.pos.x, homeVillage.z - player.pos.z) < 26 },
+    { icon: '❗', say: 'Mira the wizard has a job for you. Walk up to her and tap the yellow button.', target: () => offset(homeVillage, 7, 5), done: () => quests.state('mage') !== 'new' || coins > 0 },
+    { icon: '🎁', say: 'Do the job, then go back to Mira for your coins.', target: () => (quests.state('mage') === 'done' ? offset(homeVillage, 7, 5) : nearestStar()), done: () => coins > 0 || shopSeen },
+    { icon: '🛒', say: 'You have coins! Visit the market, by the shopping trolley.', target: () => offset(homeVillage, -3, 9), done: () => shopSeen },
+    { icon: '🐾', say: 'Now make an animal friend. Walk up to one and tap the paw.', target: () => animals.nearest(player.pos, 400)?.root.position ?? null, done: () => petSpecies >= 0 },
+    { icon: '🏁', say: 'Try the ring race! Go to the flag in the village.', target: () => offset(homeVillage, 17, -17), done: () => raced },
+    { icon: '🎣', say: 'Let us go fishing. Stand at the edge of the water and tap the fishing button.', target: () => null, done: () => fishCount > 0 },
+    { icon: '🏛️', say: 'Time for an adventure! Find the treasure in the middle of the maze.', target: () => offset(firstMaze, 0, 0), done: () => !!firstMaze && clearedForts.has(firstMaze.id) },
+    { icon: '🏰', say: 'Are you brave? Beat the giant skeleton at the fort.', target: () => offset(firstFort, 0, 0), done: () => !!firstFort && clearedForts.has(firstFort.id) },
+    { icon: '🕳️', say: 'Last one! Go down the cave and find the dungeon treasure.', target: () => (underground && firstDungeon ? offset(firstDungeon, 0, 0) : offset(firstCave, 0, 0)), done: () => !!firstDungeon && clearedForts.has(firstDungeon.id) },
+  ];
+  const guideEl = $('guide');
+  const guideIcon = $('guide-icon');
+  const guideArrow = $('guide-arrow');
+  const guideDist = $('guide-dist');
+  /** Where the current goal is, for the arrow and the map. */
+  let guideTarget: { x: number; z: number } | null = null;
+  let guideTimer = 1.5;
+  let guideSaid = -1;
+  function updateGuide(dt: number, who: THREE.Vector3): void {
+    guideTimer -= dt;
+    if (guideTimer <= 0) {
+      guideTimer = 0.5;
+      // Skip anything already done, so an old save is not walked through the basics again.
+      let advanced = false;
+      while (guideStep < STEPS.length && STEPS[guideStep].done()) {
+        guideStep++;
+        advanced = true;
+      }
+      if (advanced) {
+        sfx.win();
+        dirty = true;
+      }
+      const step = STEPS[guideStep];
+      if (step && guideSaid !== guideStep && !chat.isOpen) {
+        guideSaid = guideStep;
+        // Bolt explains each new goal once.
+        window.setTimeout(() => speak(step.say), advanced ? 1800 : 0);
+        bubbleUntil = now + 4;
+      } else if (!step && guideSaid !== guideStep) {
+        guideSaid = guideStep;
+        speak('You did everything! You are a real hero. Now explore wherever you like.');
+      }
+      guideTarget = step ? step.target() : null;
+      guideIcon.textContent = step ? step.icon : '';
+    }
+    const step = STEPS[guideStep];
+    guideEl.hidden = !step || race !== null || inside !== null || chat.isOpen;
+    if (!step) return;
+    if (!guideTarget) {
+      guideArrow.textContent = '';
+      guideDist.textContent = '';
+      return;
+    }
+    // Turn the arrow to point at the goal as seen on screen: up means straight ahead.
+    const dx = guideTarget.x - who.x;
+    const dz = guideTarget.z - who.z;
+    const right = dx * Math.cos(camYaw) - dz * Math.sin(camYaw);
+    const ahead = -dx * Math.sin(camYaw) - dz * Math.cos(camYaw);
+    guideArrow.textContent = '⬆';
+    guideArrow.style.transform = `rotate(${Math.atan2(right, ahead)}rad)`;
+    guideDist.textContent = String(Math.round(Math.hypot(dx, dz)));
+  }
+
   let actionShown = '';
 
   // ---- map: where the villages, stars and his things are ----
   const miniMap = new MiniMap($<HTMLCanvasElement>('map'));
+  $('map-in').addEventListener('click', () => miniMap.zoomBy(-1));
+  $('map-out').addEventListener('click', () => miniMap.zoomBy(1));
   function updateMap(dt: number, who: THREE.Vector3): void {
     const icons: MapIcon[] = [];
     for (const s of terrain.stars) icons.push({ x: s.pos.x, z: s.pos.z, icon: '⭐' });
@@ -1997,6 +2176,7 @@ async function createGame(assets: Assets): Promise<Game> {
       icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
     }
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
+    if (guideTarget) icons.push({ x: guideTarget.x, z: guideTarget.z, icon: '🎯', pin: true });
     miniMap.update(dt, who.x, who.z, camYaw, driving ? carHeading : facing, icons);
   }
 
@@ -2047,6 +2227,8 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          guide: guideStep,
+          bag,
           underground,
           race: race ? race.next : -1,
           fishing: fishing !== null,
@@ -2186,7 +2368,10 @@ async function createGame(assets: Assets): Promise<Game> {
       if (selfBubble.visible && now > emoteUntil) selfBubble.visible = false;
       if (goalStar.visible) goalStar.rotation.y = now * 2;
       updateVillagers(dt, who);
-      if (started) updateExtras(who);
+      if (started) {
+        updateExtras(who);
+        updateGuide(dt, who);
+      }
       for (const s of terrain.stars) {
         const mesh = s.group.children[0];
         mesh.rotation.y = now * 2;
@@ -2194,7 +2379,7 @@ async function createGame(assets: Assets): Promise<Game> {
       }
       updateCamera(dt, who);
       updateBolt(dt, who);
-      mapEl.hidden = inside !== null || underground;
+      mapEl.hidden = zoomEl.hidden = inside !== null || underground;
       if (started && !inside && !underground) updateMap(dt, who);
 
       // Sky, sea, clouds and the sun's shadow all travel with the player.

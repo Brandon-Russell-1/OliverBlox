@@ -306,6 +306,96 @@ body:not(.touch) #fly {
   background: #c9f5d2;
 }
 
+#bag-btn {
+  right: calc(394px + env(safe-area-inset-right));
+}
+
+#guide {
+  position: fixed;
+  top: calc(70px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 3px solid #ffd43b;
+  color: #1c2a6b;
+  font-size: 28px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+#guide-arrow {
+  display: inline-block;
+  color: #e8413c;
+  font-size: 34px;
+  line-height: 1;
+}
+
+#guide[hidden],
+#bag[hidden],
+#map-zoom[hidden] {
+  display: none;
+}
+
+#bag {
+  position: fixed;
+  z-index: 6;
+  top: calc(70px + env(safe-area-inset-top));
+  left: calc(12px + env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: repeat(4, 72px);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(20, 30, 80, 0.85);
+}
+
+#bag button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 72px;
+  padding: 6px 0;
+  border-radius: 14px;
+  background: #fff;
+  font-size: 30px;
+}
+
+#bag button span {
+  font-size: 15px;
+  font-weight: 800;
+  color: #1c2a6b;
+}
+
+#bag button.on {
+  background: #c9f5d2;
+}
+
+#shop button.sell {
+  background: #fff3c4;
+}
+
+#map-zoom {
+  position: fixed;
+  top: calc(228px + env(safe-area-inset-top));
+  right: calc(32px + env(safe-area-inset-right));
+  display: flex;
+  gap: 10px;
+}
+
+#map-zoom button {
+  width: 50px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 3px solid rgba(20, 30, 80, 0.4);
+  font-size: 20px;
+}
+
 #race {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top));

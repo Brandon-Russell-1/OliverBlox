@@ -41,6 +41,10 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Shared with friends:** stars and treasure chests now vanish for everyone when one player takes them, and everyone gets the prize. Friends' building counts toward building jobs. Friends are shown in their car or boat, with their pet beside them.
 - **Grown-up controls:** in the grown-ups panel, switch music or skeletons off, see minutes played today, and set a daily limit. When the limit is reached a "time for a break" screen covers the game until a grown-up raises it.
 - **Works offline:** after the first visit the game is kept on the device, so it loads quickly and opens without internet (playing alone; chat and playing together need a connection).
+- **The guide:** a banner at the top shows one goal at a time: a picture of what to do, a red arrow pointing to it, and how far away it is. Bolt explains each new goal out loud, and it shows as 🎯 on the map. It walks through eleven goals, from the first star to the dungeon treasure, skipping any already done.
+- **Bag:** the 🎒 button shows what he is carrying (fish, bones from skeletons, gems from chests and treasure) and what he owns. Hats can be put on and taken off from here.
+- **Market:** the village shop also buys. The top row lists what is in his bag; a tap sells one for coins.
+- **Map zoom:** the ➕ and ➖ buttons under the map zoom it in and out, and the choice is remembered. Tapping the map still makes it big.
 - **Caves and dungeons:** the 🕳️ on the map is a cave: a ring of boulders round a dark hole. Standing on the hole and tapping the button goes down into a dungeon, a dark stone maze lit only by his torch. A giant skeleton guards the treasure in the middle (40 coins and 6 stars). The ladder where he arrived goes back up. The first cave is north-west of the start.
 - **Mazes:** the 🏛️ on the map is a stone maze with a big treasure chest in the middle (20 coins and 3 stars). The way in is on one side. The first is north of the start.
 - **Ring race:** every village has a 🏁 flag. Tapping the button there starts a race through eight rings round the village, on foot or in a car, with 90 seconds on the clock. Faster pays more coins.
@@ -83,7 +87,8 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 6. Day and night, music, Bolt puzzles, colour jobs, shared stars and treasure, grown-up controls, offline (done)
 7. Mazes, ring race, fishing, a house to furnish, hats, letter jobs, riding together, recorded sounds (done)
 8. Caves and dungeons, hats and held weapons shown to friends, shared time of day, smaller download (done)
-9. More mini-games, outfits beyond hats, decorated dungeon walls
+9. Guide, bag, market selling, map zoom (done)
+10. A home he arranges himself, trading between players, more mini-games, decorated dungeon walls
 
 ## Credits
 

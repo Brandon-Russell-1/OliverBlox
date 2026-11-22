@@ -11,8 +11,9 @@ export interface MapIcon {
 const SIZE = 320;
 /** Terrain is sampled coarsely and scaled up; it only needs to read as land and sea. */
 const CELLS = 44;
-const SMALL_RANGE = 170;
-const BIG_RANGE = 520;
+/** How far the small map reaches at each zoom level, in metres. Tapping the map shows three times as far. */
+const RANGES = [80, 170, 340];
+const ZOOM_KEY = 'oliverblox-zoom';
 
 function terrainColor(h: number): [number, number, number] {
   if (h < -3) return [38, 120, 214];
@@ -29,6 +30,7 @@ function terrainColor(h: number): [number, number, number] {
  */
 export class MiniMap {
   big = false;
+  private zoom = Math.min(RANGES.length - 1, Math.max(0, Number(localStorage.getItem(ZOOM_KEY) ?? 1) || 0));
   private readonly ctx: CanvasRenderingContext2D;
   private readonly land = document.createElement('canvas');
   private readonly landCtx: CanvasRenderingContext2D;
@@ -47,13 +49,20 @@ export class MiniMap {
     });
   }
 
+  /** Zoom in (-1) or out (+1), and remember the choice. */
+  zoomBy(step: number): void {
+    this.zoom = Math.min(RANGES.length - 1, Math.max(0, this.zoom + step));
+    localStorage.setItem(ZOOM_KEY, String(this.zoom));
+    this.timer = 0;
+  }
+
   /** Redraw a few times a second; the map does not need to be smoother than that. */
   update(dt: number, px: number, pz: number, camYaw: number, facing: number, icons: MapIcon[]): void {
     this.timer -= dt;
     if (this.timer > 0) return;
     this.timer = this.big ? 0.4 : 0.2;
 
-    const range = this.big ? BIG_RANGE : SMALL_RANGE;
+    const range = RANGES[this.zoom] * (this.big ? 3 : 1);
     // Screen-up is the way the camera looks; screen-right is the camera's right.
     const fx = -Math.sin(camYaw);
     const fz = -Math.cos(camYaw);
