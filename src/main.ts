@@ -3,7 +3,7 @@ import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
 import { Terrain, groundAt, nearestVillage, villagesNear, linkedPlace, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
 import { MiniMap, type MapIcon } from './map';
-import { Home, ROOM } from './home';
+import { Home, ROOM, type Spot } from './home';
 import { Coder } from './coder';
 import { Net, Peers } from './net';
 import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
@@ -13,7 +13,7 @@ import { Animals, Pet, type Animal } from './animals';
 import { Quests, QUEST_ICONS, LETTERS, type QuestSave } from './quests';
 import { Actor } from './actor';
 import { Enemies, type EnemyContext, type Target } from './combat';
-import { emojiTexture, textTexture, faceFor, makeMarker, EMOTES } from './emoji';
+import { emojiTexture, textTexture, faceFor, makeMarker, makeLabel, setLabel, EMOTES } from './emoji';
 import { getPlayerName, setPlayerName } from './profile';
 import { music } from './music';
 import { loadSettings, saveSettings, addPlayTime, minutesToday } from './settings';
@@ -132,6 +132,13 @@ interface Save {
   guide?: number;
   shopSeen?: boolean;
   raced?: boolean;
+  /** Version of the guide's list of goals; a change restarts it, skipping what is already done. */
+  gv?: number;
+  homeSeen?: boolean;
+  /** Where he has put each piece of furniture, and the colours he picked. */
+  layout?: Record<string, Spot>;
+  wall?: number;
+  floor?: number;
 }
 
 function loadSave(): Save | null {
@@ -291,7 +298,11 @@ const ITEMS = [
   { key: 'gem', icon: '💎', price: 6 },
 ];
 const bag: Record<string, number> = { fish: 0, bone: 0, gem: 0, ...save?.bag };
-let guideStep = save?.guide ?? 0;
+let guideStep = save?.gv === 2 ? (save.guide ?? 0) : 0;
+let homeSeen = save?.homeSeen ?? false;
+let layout: Record<string, Spot> = save?.layout ?? {};
+let wallColour = save?.wall ?? 0;
+let floorColour = save?.floor ?? 0;
 let shopSeen = save?.shopSeen ?? false;
 let raced = save?.raced ?? false;
 /** While he is indoors, the spot outside the door to come back to. */
@@ -534,6 +545,11 @@ function saveNow(): void {
     guide: guideStep,
     shopSeen,
     raced,
+    gv: 2,
+    homeSeen,
+    layout,
+    wall: wallColour,
+    floor: floorColour,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
@@ -685,9 +701,24 @@ async function createGame(assets: Assets): Promise<Game> {
   const home = new Home(scene);
   const mapEl = $('map');
   /** Standing by the door of a village house (the well does not count). */
-  const nearDoor = (): boolean =>
-    villageShown !== null &&
-    villageShown.buildings.some((b) => b.def > 0 && Math.hypot(b.x - player.pos.x, b.z - player.pos.z) < b.scale * 0.5 + 3.4);
+  const nearDoor = (): boolean => {
+    // His house is the first one in each village; the others are neighbours' and stay shut.
+    const b = villageShown?.buildings[1];
+    return !!b && Math.hypot(b.x - player.pos.x, b.z - player.pos.z) < b.scale * 0.5 + 3.4;
+  };
+  const homeTools = $('home-tools');
+  $('wall-btn').addEventListener('click', () => {
+    wallColour++;
+    home.setColours(wallColour, floorColour);
+    sfx.place();
+    dirty = true;
+  });
+  $('floor-btn').addEventListener('click', () => {
+    floorColour++;
+    home.setColours(wallColour, floorColour);
+    sfx.place();
+    dirty = true;
+  });
   function goInside(): void {
     setFlying(false);
     setCrawling(false);
@@ -697,7 +728,11 @@ async function createGame(assets: Assets): Promise<Game> {
     facing = Math.PI;
     camYaw = 0;
     camTarget.copy(player.pos);
-    home.show(true, furniture);
+    home.setColours(wallColour, floorColour);
+    home.show(true, furniture, layout);
+    homeTools.hidden = false;
+    if (!homeSeen) speak('Welcome home! Tap a thing to pick it up, then tap where you want it. Tap it twice to turn it.');
+    homeSeen = true;
     mapEl.hidden = true;
     attackEl.hidden = true;
     sfx.door();
@@ -707,7 +742,11 @@ async function createGame(assets: Assets): Promise<Game> {
     player.pos.copy(inside);
     camTarget.copy(player.pos);
     inside = null;
-    home.show(false, furniture);
+    // Remember where everything was left.
+    layout = home.layout();
+    home.show(false, furniture, layout);
+    homeTools.hidden = true;
+    dirty = true;
     mapEl.hidden = false;
     selectTool(tool);
     sfx.door();
@@ -741,6 +780,18 @@ async function createGame(assets: Assets): Promise<Game> {
     } else if (msg.t === 'got') {
       // A friend picked something up: it goes for us too, and we share the prize.
       if (Array.isArray(msg.ids)) gotPickups(msg.ids.slice(0, 20).filter((id) => typeof id === 'string' && id.length < 24), false);
+    } else if (msg.t === 'give') {
+      // A friend handed us something.
+      if (msg.to !== selfId) return;
+      const item = ITEMS.find((i) => i.key === msg.key);
+      if (msg.key === 'coin') coins++;
+      else if (item) bag[item.key]++;
+      else return;
+      showCoins();
+      showBag();
+      sfx.coin();
+      speak(`${peers.nearest(player.pos, 1e9)?.name || 'Your friend'} gave you a ${msg.key}!`);
+      dirty = true;
     } else if (msg.t === 'hello') {
       selfId = String(msg.id);
     } else if (msg.t === 'en') {
@@ -1480,7 +1531,20 @@ async function createGame(assets: Assets): Promise<Game> {
   // ---- building, or swinging if a weapon is in hand ----
   const ray = new THREE.Vector3();
   input.onTap = (px, py, button) => {
-    if (!started || driving || inside) return;
+    if (started && inside) {
+      // At home, taps arrange the furniture instead of building.
+      ray
+        .set((px / window.innerWidth) * 2 - 1, -(py / window.innerHeight) * 2 + 1, 0.5)
+        .unproject(camera)
+        .sub(camera.position)
+        .normalize();
+      const point = home.floorPoint(camera.position, ray);
+      const did = point ? home.tap(point.x, point.z) : null;
+      if (did === 'pick') sfx.chirp();
+      else if (did) sfx.place();
+      return;
+    }
+    if (!started || driving) return;
     garageEl.hidden = true;
     shopEl.hidden = true;
     if ((tool === SWORD || tool === STAFF) && button !== 2) {
@@ -1731,6 +1795,13 @@ async function createGame(assets: Assets): Promise<Game> {
   mazeChest.visible = false;
   scene.add(mazeChest);
 
+  // ---- the sign over his own house ----
+  const houseSign = makeMarker('🏡');
+  houseSign.scale.setScalar(0.09);
+  const houseName = makeLabel();
+  houseSign.visible = false;
+  scene.add(houseSign, houseName);
+
   // ---- ring race: start at the flag in a village, run or drive through eight rings ----
   const flag = makeMarker('🏁');
   flag.scale.setScalar(0.09);
@@ -1980,6 +2051,17 @@ async function createGame(assets: Assets): Promise<Game> {
       }
     }
 
+    const mine = villageShown?.buildings[1];
+    houseSign.visible = houseName.visible = !!mine;
+    if (mine) {
+      houseSign.position.set(mine.x, groundAt(mine.x, mine.z) + mine.scale * 1.15, mine.z);
+      houseName.position.copy(houseSign.position);
+      const title = `${getPlayerName() || 'My'} house`;
+      if (houseName.userData.title !== title) {
+        houseName.userData.title = title;
+        setLabel(houseName, title);
+      }
+    }
     flag.visible = villageShown !== null && !race;
     if (villageShown) {
       flagPos.set(villageShown.x + 17, 0, villageShown.z - 17);
@@ -2035,8 +2117,25 @@ async function createGame(assets: Assets): Promise<Game> {
       return b;
     };
     const hatIcons: Record<string, string> = { party: '🥳', top: '🎩', crown: '👑' };
+    // With a friend standing close, tapping a thing hands one over.
+    const friend = peers.nearest(player.pos, 7);
+    const give = (key: string): (() => void) | undefined =>
+      friend
+        ? () => {
+            if (key === 'coin' ? coins < 1 : bag[key] < 1) return;
+            if (key === 'coin') coins--;
+            else bag[key]--;
+            net.send({ t: 'give', to: friend.id, key });
+            sfx.coin();
+            showCoins();
+            showBag();
+            dirty = true;
+          }
+        : undefined;
     bagEl.replaceChildren(
-      ...ITEMS.map((item) => cell(item.icon, `×${bag[item.key]}`)),
+      ...(friend ? [cell('🎁', `➜ ${friend.face}`, undefined, true)] : []),
+      ...ITEMS.map((item) => cell(item.icon, `×${bag[item.key]}`, give(item.key))),
+      cell('🪙', `×${coins}`, give('coin')),
       cell(['🗡️', '🪓', '⚔️'][swordLevel], '✓'),
       cell('🪄', '✓'),
       ...(boots ? [cell('👟', '✓')] : []),
@@ -2086,6 +2185,12 @@ async function createGame(assets: Assets): Promise<Game> {
   const STEPS: Step[] = [
     { icon: '⭐', say: 'Let us find a star! Follow the arrow at the top.', target: nearestStar, done: () => starTotal() >= 1 },
     { icon: '🏠', say: 'Great! Now let us visit the village.', target: () => offset(homeVillage, 0, 0), done: () => !!homeVillage && Math.hypot(homeVillage.x - player.pos.x, homeVillage.z - player.pos.z) < 26 },
+    {
+      icon: '🏡',
+      say: 'The house with the little house sign is yours! Walk up to it and tap the door.',
+      target: () => (homeVillage ? { x: homeVillage.buildings[1].x, z: homeVillage.buildings[1].z } : null),
+      done: () => homeSeen,
+    },
     { icon: '❗', say: 'Mira the wizard has a job for you. Walk up to her and tap the yellow button.', target: () => offset(homeVillage, 7, 5), done: () => quests.state('mage') !== 'new' || coins > 0 },
     { icon: '🎁', say: 'Do the job, then go back to Mira for your coins.', target: () => (quests.state('mage') === 'done' ? offset(homeVillage, 7, 5) : nearestStar()), done: () => coins > 0 || shopSeen },
     { icon: '🛒', say: 'You have coins! Visit the market, by the shopping trolley.', target: () => offset(homeVillage, -3, 9), done: () => shopSeen },
@@ -2108,6 +2213,8 @@ async function createGame(assets: Assets): Promise<Game> {
     guideTimer -= dt;
     if (guideTimer <= 0) {
       guideTimer = 0.5;
+      // Keeps the bag's give buttons right as friends come and go.
+      showBag();
       // Skip anything already done, so an old save is not walked through the basics again.
       let advanced = false;
       while (guideStep < STEPS.length && STEPS[guideStep].done()) {
@@ -2177,6 +2284,8 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
     if (guideTarget) icons.push({ x: guideTarget.x, z: guideTarget.z, icon: '🎯', pin: true });
+    const mine = villageShown?.buildings[1];
+    if (mine) icons.push({ x: mine.x, z: mine.z, icon: '🏡' });
     miniMap.update(dt, who.x, who.z, camYaw, driving ? carHeading : facing, icons);
   }
 
@@ -2198,6 +2307,11 @@ async function createGame(assets: Assets): Promise<Game> {
           facing = f;
         },
         lettersDebug: () => letterSprites.map((l) => ({ letter: LETTERS[l.letter], x: l.sprite.position.x, z: l.sprite.position.z })),
+        homeLayout: () => home.layout(),
+        screenOf: (x: number, y: number, z: number) => {
+          const v = new THREE.Vector3(x, y, z).project(camera);
+          return [(v.x * 0.5 + 0.5) * window.innerWidth, (-v.y * 0.5 + 0.5) * window.innerHeight];
+        },
         peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
@@ -2227,6 +2341,8 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          layout,
+          wallColour,
           guide: guideStep,
           bag,
           underground,

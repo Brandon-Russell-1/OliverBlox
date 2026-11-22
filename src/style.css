@@ -379,6 +379,27 @@ body:not(.touch) #fly {
   background: #fff3c4;
 }
 
+#home-tools {
+  position: fixed;
+  top: calc(70px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
+  display: flex;
+  gap: 10px;
+}
+
+#home-tools[hidden] {
+  display: none;
+}
+
+#home-tools button {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 3px solid rgba(20, 30, 80, 0.4);
+  font-size: 30px;
+}
+
 #map-zoom {
   position: fixed;
   top: calc(228px + env(safe-area-inset-top));

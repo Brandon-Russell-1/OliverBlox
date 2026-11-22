@@ -49,7 +49,9 @@ export type NetMessage =
   // An emoji from the fixed list, by position in it.
   | { t: 'e'; i: number }
   // Stars and chests someone picked up, so they vanish for everyone and everyone is rewarded.
-  | { t: 'got'; ids: string[] };
+  | { t: 'got'; ids: string[] }
+  // One thing handed from one player to another.
+  | { t: 'give'; to: string; key: string };
 
 /** A thin wrapper over the WebSocket to the family's relay. */
 export class Net {
@@ -150,6 +152,20 @@ export class Peers {
 
   positions(): { x: number; z: number; icon: string }[] {
     return [...this.map.values()].map((p) => ({ x: p.state.x, z: p.state.z, icon: p.face }));
+  }
+
+  /** The closest friend within reach, to hand something to. */
+  nearest(pos: THREE.Vector3, reach: number): { id: string; face: string; name: string } | null {
+    let best: { id: string; face: string; name: string } | null = null;
+    let bestDist = reach;
+    for (const [id, p] of this.map) {
+      const d = Math.hypot(p.pos.x - pos.x, p.pos.z - pos.z);
+      if (d < bestDist) {
+        best = { id, face: p.face, name: p.name };
+        bestDist = d;
+      }
+    }
+    return best;
   }
 
   /** A friend close by who is driving something we could hop into. */

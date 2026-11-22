@@ -99,7 +99,7 @@ What is shared: where each player is, their hero, name, hat, the weapon in their
 
 One player's device runs the skeletons for the room and the others follow it. If that player leaves, another takes over without the skeletons disappearing.
 
-Players can only send each other emoji from a fixed list of eight. There is no typed or spoken chat between players.
+Players can hand each other fish, bones, gems and coins from the bag, one at a time, when standing together. Players can only send each other emoji from a fixed list of eight. There is no typed or spoken chat between players.
 
 ## Troubleshooting
 

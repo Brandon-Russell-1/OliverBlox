@@ -49,7 +49,9 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Mazes:** the 🏛️ on the map is a stone maze with a big treasure chest in the middle (20 coins and 3 stars). The way in is on one side. The first is north of the start.
 - **Ring race:** every village has a 🏁 flag. Tapping the button there starts a race through eight rings round the village, on foot or in a car, with 90 seconds on the clock. Faster pays more coins.
 - **Fishing:** stand on a shore facing the water and a 🎣 button appears. Cast, wait for the float to dip (the button turns to ❗), then tap to reel in. Each fish is 2 coins.
-- **His house:** every village house leads to his own room. It starts with a bed and a rug; a lamp, shelf, cabinet, couch and table are sold at the shop and appear next time he goes in.
+- **His house:** one house in each village is his. It has a 🏡 sign floating over it with his name, shows as 🏡 on the map, and is the only one with a door button. Inside is his room, the same one from every village.
+- **Arranging the room:** tap a piece of furniture to pick it up (it lifts), then tap the floor to put it there. Tap a picked-up piece again to turn it. The two buttons at the top right change the wall and floor colours. It all stays where he leaves it. The room starts with a bed and a rug; a lamp, shelf, cabinet, couch and table are sold at the market.
+- **Giving to friends:** standing next to a friend, the bag shows a 🎁 and their face. Tapping a fish, bone, gem or the coins hands one over.
 - **Hats:** the shop sells a party hat, a top hat and a crown. Tapping one he owns puts it on or takes it off.
 - **Letter jobs:** Robin the ranger asks him to find a letter. Three big letters stand around the village; touching the right one finishes the job, and touching a wrong one names it. The jobs work through the alphabet.
 - **Riding together:** stand next to a friend who is driving and tap the 🚙 button to ride along; tap again to hop out.
@@ -88,7 +90,8 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 7. Mazes, ring race, fishing, a house to furnish, hats, letter jobs, riding together, recorded sounds (done)
 8. Caves and dungeons, hats and held weapons shown to friends, shared time of day, smaller download (done)
 9. Guide, bag, market selling, map zoom (done)
-10. A home he arranges himself, trading between players, more mini-games, decorated dungeon walls
+10. A labelled house he arranges himself, giving to friends (done)
+11. More mini-games, decorated dungeon walls, skeletons that respect walls
 
 ## Credits
 
