@@ -44,6 +44,9 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Weather:** showers roll in about every seven minutes and last about a minute: rain, a greyer sky, and thunder and lightning in the heavy ones. It never rains indoors or underground.
 - **Airstrip and plane:** the 🛫 on the map is a runway. Picking ✈️ in the garage parks a propeller plane there. Push forward to speed up, press the up button to climb once it is fast enough, and the down button to descend. Flying too slowly loses height. He can only get out on the ground.
 - **Builder's kit:** the 🧰 button opens ready-made shapes (wall, tower, stairs, hut, bridge, pyramid) that build in one tap, facing the way he faces, in whichever colour is selected; eight more materials (wood, stone, grass, sand, pink, black, sky, lime); and an undo button that takes back the last thirty edits.
+- **Menu:** the ☰ button at the top opens everything that is not needed every second: 🏡 home, 🚗 vehicles, 🎒 bag, 🧰 builder's kit, 🧩 program Bolt, 😀 emoji and 👫 play together.
+- **Home button:** 🏡 in the menu takes him straight to his own front door in the nearest village, from anywhere, including indoors and underground.
+- **Always a goal:** after the guided goals, the banner keeps setting small ones (find a few stars, bonk a few skeletons, catch a fish) worth 5 coins each.
 - **The guide:** a banner at the top shows one goal at a time: a picture of what to do, a red arrow pointing to it, and how far away it is. Bolt explains each new goal out loud, and it shows as 🎯 on the map. It walks through eleven goals, from the first star to the dungeon treasure, skipping any already done.
 - **Bag:** the 🎒 button shows what he is carrying (fish, bones from skeletons, gems from chests and treasure) and what he owns. Hats can be put on and taken off from here.
 - **Market:** the village shop also buys. The top row lists what is in his bag; a tap sells one for coins.
@@ -147,7 +150,8 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 9. Guide, bag, market selling, map zoom (done)
 10. A labelled house he arranges himself, giving to friends (done)
 11. Walk-in doors and caves, weather, airstrip and plane, builder's kit (done)
-12. More mini-games, decorated dungeon walls, skeletons that respect walls
+12. A menu, a home button, ongoing goals, skeletons that respect walls (done)
+13. More mini-games, decorated dungeon walls, path-finding for skeletons
 
 ## Credits
 

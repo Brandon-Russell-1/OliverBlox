@@ -153,7 +153,8 @@ export class Pet {
     at: THREE.Vector3,
   ) {
     this.root = model.scene.clone(true);
-    this.root.position.copy(at);
+    // Beside the hero, not on top of them.
+    this.root.position.set(at.x + 2.2, at.y, at.z + 1.2);
     this.mixer = new THREE.AnimationMixer(this.root);
     for (const name of ['idle', 'walk', 'run']) {
       const clip = model.clips.find((c) => c.name === name);
@@ -184,7 +185,13 @@ export class Pet {
       dist = 5;
     }
 
-    if (dist > 3.5) {
+    if (dist < 1.6) {
+      // Too close: shuffle out of the way rather than stand inside the hero.
+      const away = dist > 0.05 ? Math.atan2(-dx, -dz) : 1;
+      p.x += Math.sin(away) * 2.5 * dt;
+      p.z += Math.cos(away) * 2.5 * dt;
+      this.play('walk');
+    } else if (dist > 3.5) {
       const speed = Math.min(20, (dist - 2.5) * 2.2);
       p.x += (dx / dist) * speed * dt;
       p.z += (dz / dist) * speed * dt;
@@ -196,6 +203,10 @@ export class Pet {
     // Paddle at the surface instead of walking along the seabed.
     p.y = Math.max(groundAt(p.x, p.z), SEA_LEVEL - 0.5);
     this.mixer.update(dt);
+  }
+
+  get position(): THREE.Vector3 {
+    return this.root.position;
   }
 
   dispose(): void {

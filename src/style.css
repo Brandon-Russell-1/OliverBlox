@@ -306,8 +306,37 @@ body:not(.touch) #fly {
   background: #c9f5d2;
 }
 
-#build-btn {
-  right: calc(454px + env(safe-area-inset-right));
+#menu-btn {
+  right: calc(64px + env(safe-area-inset-right));
+}
+
+#menu {
+  position: fixed;
+  z-index: 7;
+  top: calc(70px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
+  display: grid;
+  grid-template-columns: repeat(4, 64px);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(20, 30, 80, 0.85);
+}
+
+#menu[hidden] {
+  display: none;
+}
+
+#menu button {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  background: #fff;
+  font-size: 32px;
+}
+
+#menu button.on {
+  background: #7df0a0;
 }
 
 #build {

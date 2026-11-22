@@ -90,6 +90,8 @@ export interface EnemyContext {
   /** A skeleton's blow landed on this target. */
   onHit(targetId: string, from: { x: number; z: number }): void;
   onDefeat(at: THREE.Vector3, boss: boolean): void;
+  /** Push a skeleton out of anything solid: trees, boulders, buildings and walls. */
+  collide(pos: THREE.Vector3, radius: number): void;
   /** When someone else runs the skeletons: tell them we hit one. */
   sendDamage(id: string, amount: number, x: number, z: number): void;
 }
@@ -469,6 +471,7 @@ export class Enemies {
         }
       }
 
+      ctx.collide(e.pos, 0.5 * e.kind.scale);
       e.pos.y = groundAt(e.pos.x, e.pos.z);
       let diff = e.heading - e.actor.root.rotation.y;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));

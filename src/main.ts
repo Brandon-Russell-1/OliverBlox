@@ -133,6 +133,9 @@ interface Save {
   guide?: number;
   shopSeen?: boolean;
   raced?: boolean;
+  kills?: number;
+  /** The goal he is on once the guided ones are finished. */
+  goal?: { kind: string; need: number; start: number } | null;
   /** Version of the guide's list of goals; a change restarts it, skipping what is already done. */
   gv?: number;
   homeSeen?: boolean;
@@ -410,6 +413,8 @@ const ITEMS = [
 const bag: Record<string, number> = { fish: 0, bone: 0, gem: 0, ...save?.bag };
 let guideStep = save?.gv === 2 ? (save.guide ?? 0) : 0;
 let homeSeen = save?.homeSeen ?? false;
+let kills = save?.kills ?? 0;
+let bonus: { kind: string; need: number; start: number } | null = save?.goal ?? null;
 let layout: Record<string, Spot> = save?.layout ?? {};
 let wallColour = save?.wall ?? 0;
 let floorColour = save?.floor ?? 0;
@@ -680,6 +685,8 @@ function saveNow(): void {
     raced,
     gv: 2,
     homeSeen,
+    kills,
+    goal: bonus,
     layout,
     wall: wallColour,
     floor: floorColour,
@@ -1729,6 +1736,7 @@ async function createGame(assets: Assets): Promise<Game> {
       return;
     }
     coins++;
+    kills++;
     bag.bone++;
     showCoins();
     showBag();
@@ -1751,6 +1759,9 @@ async function createGame(assets: Assets): Promise<Game> {
       if (boss) bossFort = '';
       reward(boss, fort);
       net.send({ t: 'won', boss, fort });
+    },
+    collide(pos, radius) {
+      terrain.collide(pos, radius);
     },
     sendDamage(id, amount, x, z) {
       net.send({ t: 'dmg', id, n: amount, x, z });
@@ -2707,6 +2718,53 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     return best;
   };
+  // ---- the menu: everything that is not needed every second lives behind one button ----
+  const menuEl = $('menu');
+  $('menu-btn').addEventListener('click', () => {
+    menuEl.hidden = !menuEl.hidden;
+  });
+  // Choosing something from the menu puts the menu away.
+  menuEl.addEventListener('click', () => {
+    menuEl.hidden = true;
+  });
+  /** His house in the village nearest to where he is now, or the first village if none is near. */
+  function myHouse(): { x: number; z: number; rot: number; scale: number } | null {
+    let best: Village | null = null;
+    let bestDist = Infinity;
+    for (const v of villagesNear(player.pos.x, player.pos.z)) {
+      const d = Math.hypot(v.x - player.pos.x, v.z - player.pos.z);
+      if (v.kind === 'village' && d < bestDist) {
+        best = v;
+        bestDist = d;
+      }
+    }
+    return (best ?? homeVillage)?.buildings[1] ?? null;
+  }
+  $('home-btn').addEventListener('click', () => {
+    if (!started) return;
+    if (driving) {
+      speak('Hop out first, then we can go home.');
+      return;
+    }
+    travel(() => {
+      // Wherever he is, indoors, underground or far away, he lands at his own front door.
+      if (inside) goOutside();
+      if (riding) hopOut();
+      setFlying(false);
+      const house = myHouse();
+      if (!house) return;
+      const d = house.scale * 0.4 + 6;
+      player.pos.set(house.x + Math.sin(house.rot) * d, 0, house.z + Math.cos(house.rot) * d);
+      player.pos.y = groundAt(player.pos.x, player.pos.z);
+      player.vel.set(0, 0, 0);
+      facing = house.rot + Math.PI;
+      camYaw = house.rot;
+      camTarget.copy(player.pos);
+      speak('Home sweet home!');
+      dirty = true;
+    });
+  });
+
   const STEPS: Step[] = [
     { icon: '⭐', say: 'Let us find a star! Follow the arrow at the top.', target: nearestStar, done: () => starTotal() >= 1 },
     { icon: '🏠', say: 'Great! Now let us visit the village.', target: () => offset(homeVillage, 0, 0), done: () => !!homeVillage && Math.hypot(homeVillage.x - player.pos.x, homeVillage.z - player.pos.z) < 26 },
@@ -2734,8 +2792,26 @@ async function createGame(assets: Assets): Promise<Game> {
   let guideTarget: { x: number; z: number } | null = null;
   let guideTimer = 1.5;
   let guideSaid = -1;
+  // Once the guided goals are done there is always one more small thing to go for.
+  const BONUS: Record<string, { icon: string; count: () => number; say: (n: number) => string; min: number; max: number }> = {
+    stars: { icon: '⭐', count: starTotal, say: (n) => `Can you find ${n} more stars?`, min: 3, max: 5 },
+    skeletons: { icon: '💀', count: () => kills, say: (n) => `Can you bonk ${n} skeletons?`, min: 2, max: 4 },
+    fish: { icon: '🐟', count: () => fishCount, say: (n) => `Can you catch ${n} fish?`, min: 1, max: 2 },
+  };
+  function newBonus(): void {
+    const kinds = Object.keys(BONUS).filter((k) => k !== 'skeletons' || parent.fighting);
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    const def = BONUS[kind];
+    const need = def.min + Math.floor(Math.random() * (def.max - def.min + 1));
+    bonus = { kind, need, start: def.count() };
+    speak(def.say(need));
+    dirty = true;
+  }
+
   function updateGuide(dt: number, who: THREE.Vector3): void {
     guideTimer -= dt;
+    const step: Step | undefined = STEPS[guideStep];
+    const extra = !step && bonus ? BONUS[bonus.kind] : null;
     if (guideTimer <= 0) {
       guideTimer = 0.5;
       // Keeps the bag's give buttons right as friends come and go.
@@ -2750,25 +2826,38 @@ async function createGame(assets: Assets): Promise<Game> {
         sfx.win();
         dirty = true;
       }
-      const step = STEPS[guideStep];
-      if (step && guideSaid !== guideStep && !chat.isOpen) {
+      const next = STEPS[guideStep];
+      if (next && guideSaid !== guideStep && !chat.isOpen) {
         guideSaid = guideStep;
         // Bolt explains each new goal once.
-        window.setTimeout(() => speak(step.say), advanced ? 1800 : 0);
+        window.setTimeout(() => speak(next.say), advanced ? 1800 : 0);
         bubbleUntil = now + 4;
-      } else if (!step && guideSaid !== guideStep) {
-        guideSaid = guideStep;
-        speak('You did everything! You are a real hero. Now explore wherever you like.');
+      } else if (!next && !chat.isOpen) {
+        if (guideSaid !== guideStep) {
+          guideSaid = guideStep;
+          if (advanced) speak('You did everything! You are a real hero.');
+        } else if (!bonus || !BONUS[bonus.kind]) {
+          newBonus();
+        } else if (BONUS[bonus.kind].count() - bonus.start >= bonus.need) {
+          bonus = null;
+          coins += 5;
+          showCoins();
+          sfx.win();
+          cheerUntil = now + 2;
+          speak('Well done! Here are five coins.');
+          dirty = true;
+        }
       }
-      guideTarget = step ? step.target() : null;
-      guideIcon.textContent = step ? step.icon : '';
+      // Stars are the only extra goal with somewhere to point.
+      guideTarget = next ? next.target() : bonus?.kind === 'stars' ? nearestStar() : null;
+      guideIcon.textContent = next ? next.icon : extra ? extra.icon : '';
     }
-    const step = STEPS[guideStep];
-    guideEl.hidden = !step || race !== null || inside !== null || chat.isOpen;
-    if (!step) return;
+    guideEl.hidden = (!step && !extra) || race !== null || inside !== null || chat.isOpen;
+    if (guideEl.hidden) return;
+    const progress = extra && bonus ? `${Math.min(bonus.need, extra.count() - bonus.start)}/${bonus.need}` : '';
     if (!guideTarget) {
       guideArrow.textContent = '';
-      guideDist.textContent = '';
+      guideDist.textContent = progress;
       return;
     }
     // Turn the arrow to point at the goal as seen on screen: up means straight ahead.
@@ -2778,7 +2867,7 @@ async function createGame(assets: Assets): Promise<Game> {
     const ahead = -dx * Math.sin(camYaw) - dz * Math.cos(camYaw);
     guideArrow.textContent = '⬆';
     guideArrow.style.transform = `rotate(${Math.atan2(right, ahead)}rad)`;
-    guideDist.textContent = String(Math.round(Math.hypot(dx, dz)));
+    guideDist.textContent = progress || String(Math.round(Math.hypot(dx, dz)));
   }
 
   let actionShown = '';
@@ -2850,6 +2939,10 @@ async function createGame(assets: Assets): Promise<Game> {
         peersBadges: () => peers.badgesDebug(),
         perf: () => ({ ...renderer.info.render }),
         frameMs: () => frameMs,
+        petPos: () => pet?.position ?? player.pos,
+        finishGoal: () => {
+          if (bonus) bonus.start -= 99;
+        },
         peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
