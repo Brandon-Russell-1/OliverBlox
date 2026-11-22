@@ -21,6 +21,7 @@
       <div id="stars"><span class="star-icon">⭐</span><span id="star-count">0</span><span class="coin-icon">🪙</span><span id="coin-count">0</span></div>
       <div id="quests"></div>
       <div id="race" hidden></div>
+      <div id="toast" hidden></div>
       <div id="guide" hidden><span id="guide-icon"></span><span id="guide-arrow"></span><span id="guide-dist"></span></div>
       <div id="bag" hidden></div>
       <div id="build" hidden></div>
@@ -103,6 +104,13 @@
             </select>
           </label>
           <span id="played"></span>
+        </div>
+        <div id="backup">
+          <button id="cloud-save" type="button">Back up</button>
+          <button id="cloud-load" type="button">Restore</button>
+          <button id="file-save" type="button">Save to file</button>
+          <label class="file">Load file<input id="file-load" type="file" accept="application/json,.json" /></label>
+          <span id="cloud-status"></span>
         </div>
         <label>What has been said<textarea id="ai-log" readonly rows="6"></textarea></label>
         <div id="parent-row">

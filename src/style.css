@@ -346,7 +346,7 @@ body:not(.touch) #fly {
   bottom: calc(96px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   display: grid;
-  grid-template-columns: repeat(8, minmax(36px, 56px));
+  grid-template-columns: repeat(9, minmax(32px, 56px));
   gap: 8px;
   max-width: calc(100vw - 16px);
   padding: 10px;
@@ -920,6 +920,49 @@ body:not(.touch) #fly {
 
 .quest {
   box-sizing: content-box;
+}
+
+#backup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+#backup button,
+#parent #backup label.file {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #e5ebff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#parent #backup input {
+  display: none;
+}
+
+#toast {
+  position: fixed;
+  top: calc(124px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 20px;
+  border-radius: 999px;
+  background: rgba(20, 30, 80, 0.85);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 800;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+#toast[hidden] {
+  display: none;
 }
 
 #parent-row {

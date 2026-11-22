@@ -16,6 +16,22 @@ interface Env {
   ALLOWED_ORIGINS: string;
   /** One relay per room name, for playing together. */
   ROOMS: DurableObjectNamespace<Room>;
+  /** One stored save per player name, for backing up and moving between devices. */
+  VAULT: DurableObjectNamespace<Vault>;
+}
+
+/** Keeps one player's save. Nothing else is stored, and nothing is read but that save. */
+export class Vault extends DurableObject<Env> {
+  async fetch(request: Request): Promise<Response> {
+    if (request.method === 'PUT') {
+      const text = await request.text();
+      if (text.length > 600_000) return new Response('too big', { status: 413 });
+      await this.ctx.storage.put('save', text);
+      return new Response('ok');
+    }
+    const text = await this.ctx.storage.get<string>('save');
+    return text ? new Response(text) : new Response('none', { status: 404 });
+  }
 }
 
 const MAX_PLAYERS = 8;
@@ -216,7 +232,7 @@ export default {
       ? {
           'access-control-allow-origin': origin,
           'access-control-allow-headers': 'content-type, x-family-code',
-          'access-control-allow-methods': 'POST, OPTIONS',
+          'access-control-allow-methods': 'GET, PUT, POST, OPTIONS',
           vary: 'origin',
         }
       : {};
@@ -231,6 +247,17 @@ export default {
         return json({ error: 'wrong family code' }, 401, cors);
       }
       return env.ROOMS.get(env.ROOMS.idFromName(room[1])).fetch(request);
+    }
+
+    // Backups: GET or PUT /save/<player name>, guarded the same way as everything else.
+    const slot = /^\/save\/([a-z]{1,12})$/.exec(url.pathname);
+    if (slot && (request.method === 'GET' || request.method === 'PUT')) {
+      if (!allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403, cors);
+      if (!env.FAMILY_CODE || request.headers.get('x-family-code') !== env.FAMILY_CODE) {
+        return json({ error: 'wrong family code' }, 401, cors);
+      }
+      const stored = await env.VAULT.get(env.VAULT.idFromName(slot[1])).fetch(request);
+      return new Response(stored.body, { status: stored.status, headers: cors });
     }
 
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/chat') {

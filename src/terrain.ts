@@ -270,7 +270,28 @@ function wallDef(height: number): PropDef {
 }
 const WALL = wallDef(5);
 const WALL_TALL = wallDef(DUNGEON_HEIGHT + 0.5);
-const WALL_MATERIAL = new THREE.MeshLambertMaterial({ color: 0x9ea1b0 });
+/** A stone-block pattern drawn once, so walls read as built rather than as grey slabs. */
+function stoneTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  g.fillStyle = '#8f93a3';
+  g.fillRect(0, 0, 128, 128);
+  for (let row = 0; row < 4; row++) {
+    for (let col = -1; col < 3; col++) {
+      const x = col * 64 + (row % 2) * 32;
+      const shade = 150 + ((row * 37 + col * 61) % 5) * 9;
+      g.fillStyle = `rgb(${shade}, ${shade + 3}, ${shade + 16})`;
+      g.fillRect(x + 2, row * 32 + 2, 60, 28);
+    }
+  }
+  const texture = new THREE.CanvasTexture(c);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(3, 2);
+  return texture;
+}
+const WALL_MATERIAL = new THREE.MeshLambertMaterial({ map: stoneTexture() });
 
 const heightCache = new Map<number, number>();
 

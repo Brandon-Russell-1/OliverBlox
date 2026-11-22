@@ -101,6 +101,16 @@ One player's device runs the skeletons for the room and the others follow it. If
 
 Players can hand each other fish, bones, gems and coins from the bag, one at a time, when standing together. Players can only send each other emoji from a fixed list of eight. There is no typed or spoken chat between players.
 
+## Backups
+
+The Worker also keeps a backup of each player's save, so progress survives a cleared browser and can move between devices. It is stored on your own Cloudflare account under the player's name and guarded by the family code, like everything else.
+
+- **Back up** in the grown-ups panel uploads this device's save now. It also happens by itself every three minutes.
+- **Restore** downloads the backup for the name on the start screen and replaces this device's save with it, after asking.
+- To move to a new device: set the same helper address and family code there, type the same name on the start screen, and press Restore.
+
+Two players with the same name share one backup, so give each child a different name.
+
 ## Troubleshooting
 
 | Transcript shows | Meaning | Fix |

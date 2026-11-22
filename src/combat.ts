@@ -52,6 +52,10 @@ interface Enemy {
   dartTime: number;
   fleeTime: number;
   fled: boolean;
+  /** Time spent pushing against something, and which way to go round it. */
+  stuck: number;
+  detour: number;
+  detourTime: number;
   /** Where the host last said this one is, when another player is running the skeletons. */
   net: { x: number; y: number; z: number; h: number } | null;
 }
@@ -152,6 +156,9 @@ export class Enemies {
       dartTime: 0,
       fleeTime: 0,
       fled: false,
+      stuck: 0,
+      detour: Math.random() < 0.5 ? 1 : -1,
+      detourTime: 0,
       net: null,
     };
     this.list.push(e);
@@ -381,6 +388,13 @@ export class Enemies {
       }
       return;
     }
+    // Blocked by a wall a moment ago: go round it sideways for a bit, then head for the player again.
+    if (e.detourTime > 0) {
+      e.detourTime -= dt;
+      if (e.detourTime <= 0) e.detour = -e.detour;
+      this.step(e, toward + e.detour * 1.35, e.kind.speed, dt);
+      return;
+    }
     this.step(e, toward, e.kind.speed, dt);
   }
 
@@ -456,6 +470,8 @@ export class Enemies {
       }
       const dx = target ? target.pos.x - e.pos.x : 0;
       const dz = target ? target.pos.z - e.pos.z : 0;
+      const fromX = e.pos.x;
+      const fromZ = e.pos.z;
       this.think(e, target, dist, dx, dz, dt, ctx);
 
       // Keep a little space between skeletons so they surround rather than pile up.
@@ -472,6 +488,13 @@ export class Enemies {
       }
 
       ctx.collide(e.pos, 0.5 * e.kind.scale);
+      // Chasing but hardly moving means something solid is in the way.
+      if (e.state === 'chase' && Math.hypot(e.pos.x - fromX, e.pos.z - fromZ) < e.kind.speed * dt * 0.35) e.stuck += dt;
+      else e.stuck = 0;
+      if (e.stuck > 0.25) {
+        e.stuck = 0;
+        e.detourTime = 1.3;
+      }
       e.pos.y = groundAt(e.pos.x, e.pos.z);
       let diff = e.heading - e.actor.root.rotation.y;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));

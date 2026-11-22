@@ -56,6 +56,9 @@ export type NetMessage =
   | { t: 'got'; ids: string[] }
   // One thing handed from one player to another.
   | { t: 'give'; to: string; key: string }
+  // A race started in a village, and someone finishing it.
+  | { t: 'race'; x: number; z: number }
+  | { t: 'racewon'; n: string }
   // How a player has furnished their house, so friends can visit it.
   | { t: 'home'; owned: string[]; layout: Record<string, [number, number, number]>; wall: number; floor: number };
 

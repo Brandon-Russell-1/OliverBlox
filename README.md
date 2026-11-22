@@ -44,6 +44,10 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 - **Weather:** showers roll in about every seven minutes and last about a minute: rain, a greyer sky, and thunder and lightning in the heavy ones. It never rains indoors or underground.
 - **Airstrip and plane:** the 🛫 on the map is a runway. Picking ✈️ in the garage parks a propeller plane there. Push forward to speed up, press the up button to climb once it is fast enough, and the down button to descend. Flying too slowly loses height. He can only get out on the ground.
 - **Builder's kit:** the 🧰 button opens ready-made shapes (wall, tower, stairs, hut, bridge, pyramid) that build in one tap, facing the way he faces, in whichever colour is selected; eight more materials (wood, stone, grass, sand, pink, black, sky, lime); and an undo button that takes back the last thirty edits.
+- **Backups:** the grown-ups panel has **Back up** and **Restore**, which keep the save on your own Cloudflare Worker under the player's name, so it can be moved to another device with the same helper address, family code and name. With the helper set up it also backs up by itself every three minutes. **Save to file** and **Load file** do the same without a Worker.
+- **Village names and differences:** each village has its own name, announced on arrival. Not every wandering townsperson lives in every village, and each market stocks a different selection of hats and furniture.
+- **Racing together:** when a friend in the same village starts the ring race, it starts for everyone there, and a message shows when someone finishes.
+- **Copying a build:** in the builder's kit, 📸 remembers whatever is built near him and 🖼️ builds it again wherever he taps.
 - **Menu:** the ☰ button at the top opens everything that is not needed every second: 🏡 home, 🚗 vehicles, 🎒 bag, 🧰 builder's kit, 🧩 program Bolt, 😀 emoji and 👫 play together.
 - **Home button:** 🏡 in the menu takes him straight to his own front door in the nearest village, from anywhere, including indoors and underground.
 - **Always a goal:** after the guided goals, the banner keeps setting small ones (find a few stars, bonk a few skeletons, catch a fish) worth 5 coins each.
@@ -151,7 +155,8 @@ Pushing to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`
 10. A labelled house he arranges himself, giving to friends (done)
 11. Walk-in doors and caves, weather, airstrip and plane, builder's kit (done)
 12. A menu, a home button, ongoing goals, skeletons that respect walls (done)
-13. More mini-games, decorated dungeon walls, path-finding for skeletons
+13. Backups, village differences, stone walls, skeletons that go round walls, shared race, copying builds (done)
+14. Dungeon props and torches, slopes and windows for building, more to do with friends
 
 ## Credits
 

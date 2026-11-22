@@ -707,6 +707,67 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', saveOnLeave);
 
+// ---------- backups: to the family's own Worker, or to a file ----------
+const cloudStatus = $('cloud-status');
+const saveSlot = (): string => (getPlayerName() || 'player').toLowerCase();
+async function cloudBackup(quiet = false): Promise<void> {
+  const ai = getAiSettings();
+  const data = localStorage.getItem(SAVE_KEY);
+  if (!ai.url || !data) {
+    if (!quiet) cloudStatus.textContent = ai.url ? 'Nothing to back up yet.' : 'Set up the AI helper address first.';
+    return;
+  }
+  try {
+    const res = await fetch(`${ai.url}/save/${saveSlot()}`, { method: 'PUT', headers: { 'x-family-code': ai.code }, body: data });
+    if (!quiet) cloudStatus.textContent = res.ok ? `Backed up as "${saveSlot()}".` : `Backup failed (${res.status}).`;
+  } catch {
+    if (!quiet) cloudStatus.textContent = 'Could not reach the helper.';
+  }
+}
+/** Replace this device's save with another one, after checking it really is a save. */
+function restoreSave(text: string): void {
+  try {
+    if ((JSON.parse(text) as Save).v !== 2) throw new Error('not a save');
+  } catch {
+    cloudStatus.textContent = 'That is not an OliverBlox save.';
+    return;
+  }
+  if (!window.confirm('Replace the game on this device with that save?')) return;
+  resetting = true;
+  localStorage.setItem(SAVE_KEY, text);
+  location.reload();
+}
+$('cloud-save').addEventListener('click', () => {
+  saveOnLeave();
+  void cloudBackup();
+});
+$('cloud-load').addEventListener('click', () => {
+  const ai = getAiSettings();
+  if (!ai.url) {
+    cloudStatus.textContent = 'Set up the AI helper address first.';
+    return;
+  }
+  fetch(`${ai.url}/save/${saveSlot()}`, { headers: { 'x-family-code': ai.code } })
+    .then((res) => (res.ok ? res.text() : Promise.reject(res.status)))
+    .then(restoreSave)
+    .catch((status) => {
+      cloudStatus.textContent = status === 404 ? `No backup found for "${saveSlot()}".` : 'Could not fetch the backup.';
+    });
+});
+$('file-save').addEventListener('click', () => {
+  saveOnLeave();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([localStorage.getItem(SAVE_KEY) ?? ''], { type: 'application/json' }));
+  link.download = `oliverblox-${saveSlot()}.json`;
+  link.click();
+});
+$<HTMLInputElement>('file-load').addEventListener('change', (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (file) void file.text().then(restoreSave);
+});
+// With the helper set up, a backup is taken every few minutes without anyone asking.
+window.setInterval(() => void cloudBackup(true), 180000);
+
 // The grown-ups panel opens on a long press, so small fingers do not find it by accident.
 const openParentPanel = setupParentPanel(() => {
   resetting = true;
@@ -1070,6 +1131,15 @@ async function createGame(assets: Assets): Promise<Game> {
         wall: Number.isInteger(msg.wall) ? Math.abs(msg.wall) : 0,
         floor: Number.isInteger(msg.floor) ? Math.abs(msg.floor) : 0,
       });
+    } else if (msg.t === 'race') {
+      if (villageShown && Math.hypot(villageShown.x - msg.x, villageShown.z - msg.z) < 5 && !race) {
+        startRace(true);
+        toast('🏁 Race!');
+      }
+    } else if (msg.t === 'racewon') {
+      const who = peers.who(from);
+      toast(`🏁 ${who?.name || who?.face || 'A friend'} finished!`);
+      sfx.chirp();
     } else if (msg.t === 'give') {
       // A friend handed us something.
       if (msg.to !== selfId) return;
@@ -1284,6 +1354,30 @@ async function createGame(assets: Assets): Promise<Game> {
     else chat.open(PERSONAS.bolt);
   });
 
+  // ---- what makes one village different from the next ----
+  const hashOf = (text: string): number => {
+    let h = 7;
+    for (const c of text) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    return h;
+  };
+  const NAME_START = ['Apple', 'Moss', 'Honey', 'Pebble', 'Clover', 'Maple', 'Sunny', 'Willow', 'Berry', 'Fern'];
+  const NAME_END = ['ton', 'by', 'ford', 'wick', 'dale', 'brook', 'field', 'ham'];
+  const villageName = (v: Village): string => {
+    const h = hashOf(v.id);
+    return NAME_START[h % NAME_START.length] + NAME_END[(h >> 8) % NAME_END.length];
+  };
+  const toastEl = $('toast');
+  let toastTimer = 0;
+  /** A short message at the top of the screen, gone in a few seconds. */
+  function toast(text: string): void {
+    toastEl.textContent = text;
+    toastEl.hidden = false;
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
+      toastEl.hidden = true;
+    }, 3500);
+  }
+
   // ---- villagers of whichever village is nearby ----
   interface Villager {
     actor: Actor;
@@ -1303,9 +1397,15 @@ async function createGame(assets: Assets): Promise<Game> {
     for (const old of villagers) scene.remove(old.actor.root);
     villagers = [];
     if (!v) return;
-    const models = await Promise.all(VILLAGERS.map((def) => loadModel(`char/${def.model}.glb`)));
+    // Each village has its own name, and not all the townsfolk live in every one.
+    const locals = VILLAGERS.filter((def) => !def.wander || hashOf(v.id + def.persona) % 3 !== 0);
+    const models = await Promise.all(locals.map((def) => loadModel(`char/${def.model}.glb`)));
     if (token !== villageToken) return;
-    VILLAGERS.forEach((def, i) => {
+    if (started) {
+      toast(`🏠 ${villageName(v)}`);
+      speak(`Welcome to ${villageName(v)}!`);
+    }
+    locals.forEach((def, i) => {
       const actor = new Actor(models[i].scene, assets.clips, ['Idle_A', 'Waving', 'Walking_A']);
       const x = v.x + def.dx;
       const z = v.z + def.dz;
@@ -1494,9 +1594,11 @@ async function createGame(assets: Assets): Promise<Game> {
       });
       return b;
     });
+    // Every market sells the gear; hats and furniture depend on the village, so they are worth travelling for.
+    const stock = SHOP.filter((item, i) => i < 4 || item.owned() || hashOf(`${villageShown?.id}${i}`) % 3 !== 0);
     shopEl.replaceChildren(
       ...selling,
-      ...SHOP.map((item) => {
+      ...stock.map((item) => {
         const b = document.createElement('button');
         const owned = item.owned();
         b.className = owned ? 'owned' : coins < item.price ? 'poor' : '';
@@ -1557,7 +1659,7 @@ async function createGame(assets: Assets): Promise<Game> {
     else if (driving) exitVehicle();
     else if (holeNear) useHole(holeNear);
     else if (nearVillager) talkTo(nearVillager.persona);
-    else if (nearFlag()) startRace();
+    else if (nearFlag()) startRace(false);
     else if (nearAnimal) befriend(nearAnimal);
     else if (nearDoor()) goInside();
     else if (nearVehicle()) enterVehicle();
@@ -1943,11 +2045,12 @@ async function createGame(assets: Assets): Promise<Game> {
   function placeStamp(bx: number, by: number, bz: number): void {
     const turns = ((Math.round(facing / (Math.PI / 2)) % 4) + 4) % 4;
     const k = currentBlock();
-    const cells: Cell[] = SHAPES[stamp]().map(([x, y, z]) => {
+    const shape: Cell[] = stamp === 'mine' ? blueprint : SHAPES[stamp]().map(([x, y, z]) => [x, y, z, k]);
+    const cells: Cell[] = shape.map(([x, y, z, type]) => {
       // Quarter turns: away from the builder is +z, +x, -z or -x.
       const wx = [x, z, -x, -z][turns];
       const wz = [z, -x, -z, x][turns];
-      return [bx + wx, by + y, bz + wz, k];
+      return [bx + wx, by + y, bz + wz, type];
     });
     const n = edit(cells);
     if (n === 0) return;
@@ -1989,6 +2092,44 @@ async function createGame(assets: Assets): Promise<Game> {
       toolButtons.forEach((b) => b.classList.remove('selected'));
     }, BLOCK_COLORS[type]);
   }
+  // 📸 remembers whatever is built near him; 🖼️ builds it again somewhere else.
+  const BLUEPRINT_KEY = 'oliverblox-blueprint';
+  let blueprint: Cell[] = [];
+  try {
+    blueprint = JSON.parse(localStorage.getItem(BLUEPRINT_KEY) ?? '[]') as Cell[];
+  } catch {
+    blueprint = [];
+  }
+  kitButton('📸', () => {
+    const cx = Math.floor(player.pos.x);
+    const cz = Math.floor(player.pos.z);
+    const near: Cell[] = [];
+    for (const [key, type] of blocks.map) {
+      const [x, y, z] = key.split(',').map(Number);
+      if (Math.abs(x - cx) <= 8 && Math.abs(z - cz) <= 8) near.push([x, y, z, type]);
+    }
+    if (near.length === 0) {
+      speak('Stand next to something you built, then take its picture.');
+      return;
+    }
+    // Stored from its lowest block, a little in front of where it is placed.
+    const low = Math.min(...near.map((c) => c[1]));
+    const midX = Math.round(near.reduce((sum, c) => sum + c[0], 0) / near.length);
+    const minZ = Math.min(...near.map((c) => c[2]));
+    blueprint = near.slice(0, 600).map(([x, y, z, type]) => [x - midX, y - low, z - minZ, type]);
+    localStorage.setItem(BLUEPRINT_KEY, JSON.stringify(blueprint));
+    sfx.win();
+    speak('Got it! Tap the picture button, then tap where you want another one.');
+  });
+  kitButton('🖼️', (b) => {
+    if (blueprint.length === 0) {
+      speak('Take a picture of something you built first.');
+      return;
+    }
+    stamp = stamp === 'mine' ? '' : 'mine';
+    if (tool < FIRST_BLOCK) selectTool(FIRST_BLOCK);
+    lightKit(stamp ? b : null);
+  });
   onPickTool = () => {
     // Choosing from the hotbar goes back to its own colours and single blocks.
     extraBlock = 0;
@@ -2348,9 +2489,11 @@ async function createGame(assets: Assets): Promise<Game> {
   const raceEl = $('race');
   const nearFlag = (): boolean =>
     flag.visible && !driving && Math.hypot(flagPos.x - player.pos.x, flagPos.z - player.pos.z) < 4.5;
-  function startRace(): void {
+  function startRace(fromFriend = false): void {
     const v = villageShown;
     if (!v || race) return;
+    // Friends in the same village race the same rings.
+    if (!fromFriend) net.send({ t: 'race', x: v.x, z: v.z });
     const rings: THREE.Mesh[] = [];
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + 0.4;
@@ -2380,6 +2523,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     // Faster is worth more, but finishing always pays.
     raced = true;
+    net.send({ t: 'racewon', n: getPlayerName() });
     const prize = Math.max(3, 14 - Math.floor(seconds / 6));
     coins += prize;
     showCoins();
