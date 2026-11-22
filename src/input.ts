@@ -34,6 +34,9 @@ export class Input {
   onFly: () => void = () => {};
   onAttack: () => void = () => {};
 
+  /** When the player last touched anything, to tell if they have wandered off. */
+  lastActivity = performance.now();
+
   private keys = new Set<string>();
   private joyX = 0;
   private joyY = 0;
@@ -65,6 +68,9 @@ export class Input {
       if (e.code.startsWith('Digit')) this.onHotkey(Number(e.code.slice(5)));
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    for (const type of ['keydown', 'pointerdown', 'pointermove']) {
+      window.addEventListener(type, () => (this.lastActivity = performance.now()), { capture: true, passive: true });
+    }
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.jumpButton = false;

@@ -117,8 +117,9 @@ function villageIn(rx: number, rz: number): Village | null {
       const r = 26 + hash2(rx + i * 31, rz, 76) * 7;
       const bx = x + Math.sin(a) * r;
       const bz = z + Math.cos(a) * r;
-      // The first house in a village is the player's own, and is always the same cottage.
-      const def = kind === 'village' && i === 0 ? 1 : first + 1 + Math.floor(hash2(rx + i * 31, rz, 77) * others);
+      // The first house in a village is the player's own and the next three are for friends.
+      // All four are the same cottage, so their doors are always in the same place.
+      const def = kind === 'village' && i < 4 ? 1 : first + 1 + Math.floor(hash2(rx + i * 31, rz, 77) * others);
       // Every building faces the middle.
       buildings.push({ def, x: bx, z: bz, rot: Math.atan2(x - bx, z - bz), scale: BUILDING_SCALE });
     }

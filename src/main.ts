@@ -374,6 +374,18 @@ let shopSeen = save?.shopSeen ?? false;
 let raced = save?.raced ?? false;
 /** While he is indoors, the spot outside the door to come back to. */
 let inside: THREE.Vector3 | null = null;
+/** When indoors in a friend's house, that friend's id. */
+let visiting: string | null = null;
+interface HomeData {
+  owned: string[];
+  layout: Record<string, Spot>;
+  wall: number;
+  floor: number;
+}
+/** How each friend has done up their house, as they last told us. */
+const homes = new Map<string, HomeData>();
+/** Away from the controls this long and a 💤 shows over the hero for friends. */
+const AWAY_MS = 180000;
 const blocks = new Blocks(scene);
 if (save) blocks.load(save.blocks);
 
@@ -807,14 +819,32 @@ async function createGame(assets: Assets): Promise<Game> {
     return false;
   };
   /** A point in front of his house's door, `ahead` metres out from the wall. */
-  const doorSpot = (ahead: number): THREE.Vector3 | null => {
-    const b = villageShown?.buildings[1];
+  const doorSpotOf = (index: number, ahead: number): THREE.Vector3 | null => {
+    const b = villageShown?.buildings[index];
     if (!b) return null;
     const d = b.scale * 0.4 + ahead;
     const x = b.x + Math.sin(b.rot) * d;
     const z = b.z + Math.cos(b.rot) * d;
     return new THREE.Vector3(x, groundAt(x, z), z);
   };
+  const doorSpot = (ahead: number): THREE.Vector3 | null => doorSpotOf(1, ahead);
+  /** Friends in the room each get the next house along: the second building, the third, and so on. */
+  const friendHouses = (): string[] => peers.ids().sort().slice(0, 3);
+  const friendSigns = [0, 1, 2].map(() => {
+    const sign = makeMarker('🏠');
+    sign.scale.setScalar(0.08);
+    const name = makeLabel();
+    sign.visible = false;
+    scene.add(sign, name);
+    return { sign, name };
+  });
+  const homeMessage = (): { t: 'home'; owned: string[]; layout: Record<string, Spot>; wall: number; floor: number } => ({
+    t: 'home',
+    owned: [...furniture],
+    layout,
+    wall: wallColour,
+    floor: floorColour,
+  });
   // His front door: it swings open as he comes near.
   const frontDoor = new THREE.Group();
   const leaf = new THREE.Mesh(new THREE.BoxGeometry(2, 3.4, 0.16), new THREE.MeshLambertMaterial({ color: 0x7a4f2a }));
@@ -848,6 +878,27 @@ async function createGame(assets: Assets): Promise<Game> {
       const step = doorSpot(1);
       if (step) atZone(step.x, step.z, 1.5, goInside);
     }
+    // Friends' houses: a sign with their face and name, and a doorway into their room.
+    const friends = friendHouses();
+    friendSigns.forEach(({ sign, name }, i) => {
+      const id = friends[i];
+      const house = villageShown?.buildings[2 + i];
+      const who = id ? peers.who(id) : null;
+      sign.visible = name.visible = !!house && !!who && inside === null;
+      if (!house || !who || !id || inside) return;
+      sign.material.map = emojiTexture(who.face);
+      sign.position.set(house.x, groundAt(house.x, house.z) + house.scale * 1.15, house.z);
+      name.position.copy(sign.position);
+      const title = `${who.name || 'Friend'} house`;
+      if (name.userData.title !== title) {
+        name.userData.title = title;
+        setLabel(name, title);
+      }
+      const door = doorSpotOf(2 + i, 1);
+      if (door) atZone(door.x, door.z, 1.5, () => goInside(id));
+    });
+    if (!inside && at) {
+    }
     doorOpen += ((near ? 1 : 0) - doorOpen) * Math.min(1, 6 * dt);
     hinge.rotation.y = -doorOpen * 1.7;
     home.swing(doorOpen);
@@ -865,22 +916,32 @@ async function createGame(assets: Assets): Promise<Game> {
     sfx.place();
     dirty = true;
   });
-  function goInside(): void {
+  function goInside(owner: string | null = null): void {
     setFlying(false);
     setCrawling(false);
     // Coming back out, he will be standing a few steps in front of the door.
-    inside = doorSpot(6) ?? player.pos.clone();
+    inside = doorSpotOf(owner ? 2 + friendHouses().indexOf(owner) : 1, 6) ?? player.pos.clone();
+    visiting = owner;
+    home.clear();
     // A few steps into the room, clear of the doorway, so turning round and walking back works.
     player.pos.set(ROOM.x, ROOM.y, ROOM.z + ROOM.halfZ - 5.2);
     player.vel.set(0, 0, 0);
     facing = Math.PI;
     camYaw = 0;
     camTarget.copy(player.pos);
-    home.setColours(wallColour, floorColour);
-    home.show(true, furniture, layout);
-    homeTools.hidden = false;
-    if (!homeSeen) speak('Welcome home! Tap a thing to pick it up, then tap where you want it. Tap it twice to turn it. Walk to the door to go out.');
-    homeSeen = true;
+    if (owner) {
+      // A friend's house: shown as they left it, to look at but not rearrange.
+      const theirs = homes.get(owner) ?? { owned: [], layout: {}, wall: 0, floor: 0 };
+      home.setColours(theirs.wall, theirs.floor);
+      home.show(true, new Set(theirs.owned), theirs.layout);
+      homeTools.hidden = true;
+    } else {
+      home.setColours(wallColour, floorColour);
+      home.show(true, furniture, layout);
+      homeTools.hidden = false;
+      if (!homeSeen) speak('Welcome home! Tap a thing to pick it up, then tap where you want it. Tap it twice to turn it. Walk to the door to go out.');
+      homeSeen = true;
+    }
     mapEl.hidden = true;
     attackEl.hidden = true;
     sfx.door();
@@ -894,9 +955,13 @@ async function createGame(assets: Assets): Promise<Game> {
     if (out) facing = out.rot;
     camTarget.copy(player.pos);
     inside = null;
-    // Remember where everything was left.
-    layout = home.layout();
+    if (!visiting) {
+      // Remember where everything was left, and let friends know.
+      layout = home.layout();
+      net.send(homeMessage());
+    }
     home.show(false, furniture, layout);
+    visiting = null;
     homeTools.hidden = true;
     dirty = true;
     mapEl.hidden = false;
@@ -917,6 +982,7 @@ async function createGame(assets: Assets): Promise<Game> {
       if (!greeted.has(from)) {
         greeted.add(from);
         net.send({ t: 'B', list: blocks.save() });
+        net.send(homeMessage());
       }
     } else if (msg.t === 'bye') {
       peers.remove(from);
@@ -933,6 +999,18 @@ async function createGame(assets: Assets): Promise<Game> {
     } else if (msg.t === 'got') {
       // A friend picked something up: it goes for us too, and we share the prize.
       if (Array.isArray(msg.ids)) gotPickups(msg.ids.slice(0, 20).filter((id) => typeof id === 'string' && id.length < 24), false);
+    } else if (msg.t === 'home') {
+      // A friend's house, checked so only sensible values are kept.
+      const spots: Record<string, Spot> = {};
+      for (const [key, spot] of Object.entries(msg.layout ?? {}).slice(0, 12)) {
+        if (Array.isArray(spot) && spot.length === 3 && spot.every(Number.isFinite)) spots[key.slice(0, 12)] = spot;
+      }
+      homes.set(from, {
+        owned: (Array.isArray(msg.owned) ? msg.owned : []).filter((k) => typeof k === 'string').slice(0, 12),
+        layout: spots,
+        wall: Number.isInteger(msg.wall) ? Math.abs(msg.wall) : 0,
+        floor: Number.isInteger(msg.floor) ? Math.abs(msg.floor) : 0,
+      });
     } else if (msg.t === 'give') {
       // A friend handed us something.
       if (msg.to !== selfId) return;
@@ -1689,7 +1767,8 @@ async function createGame(assets: Assets): Promise<Game> {
       if (player.onGround && !driving && !enemies.nearest(player.pos, 45)) safeSpot.copy(player.pos);
     }
 
-    targetable = !flying && !driving && !chat.isOpen && !inside && !riding;
+    // Nobody gets jumped while they are away from the controls.
+    targetable = !flying && !driving && !chat.isOpen && !inside && !riding && performance.now() - input.lastActivity < AWAY_MS;
     const targets: Target[] = [{ id: selfId, pos: player.pos, targetable }, ...peers.targets()];
     // When friends play together, the player with the lowest id runs the skeletons for everyone;
     // the others show the same skeletons and report their hits.
@@ -1858,6 +1937,8 @@ async function createGame(assets: Assets): Promise<Game> {
   const ray = new THREE.Vector3();
   input.onTap = (px, py, button) => {
     if (started && inside) {
+      // In a friend's house things stay where they put them.
+      if (visiting) return;
       // At home, taps arrange the furniture instead of building.
       ray
         .set((px / window.innerWidth) * 2 - 1, -(py / window.innerHeight) * 2 + 1, 0.5)
@@ -2704,6 +2785,11 @@ async function createGame(assets: Assets): Promise<Game> {
         },
         airstrip: () => AIRSTRIP,
         blocksMap: () => blocks.map,
+        away: () => {
+          input.lastActivity = -1e9;
+        },
+        peersVisible: () => peers.visibleDebug(),
+        peersBadges: () => peers.badgesDebug(),
         peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
@@ -2733,6 +2819,8 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          visiting,
+          homes: homes.size,
           rain: +rain.toFixed(2),
           layout,
           wallColour,
@@ -2818,6 +2906,8 @@ async function createGame(assets: Assets): Promise<Game> {
             r: riding ? 1 : 0,
             k: hat,
             w: tool === SWORD ? swordLevel : tool === STAFF ? 3 : -1,
+            i: inside ? (visiting ?? selfId) : '',
+            q: performance.now() - input.lastActivity > AWAY_MS ? 1 : 0,
           });
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
@@ -2882,6 +2972,7 @@ async function createGame(assets: Assets): Promise<Game> {
       terrain.update(who.x, who.z, 2);
       animals.update(dt, who);
       pet?.update(dt, inside ?? who);
+      peers.room = inside ? (visiting ?? selfId) : '';
       peers.update(dt);
       if (selfBubble.visible && now > emoteUntil) selfBubble.visible = false;
       if (goalStar.visible) goalStar.rotation.y = now * 2;

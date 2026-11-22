@@ -101,6 +101,13 @@ export class Home {
     }
   }
 
+  /** Take all the furniture out, ready to show a different player's room. */
+  clear(): void {
+    for (const piece of this.pieces.values()) this.group.remove(piece);
+    this.pieces.clear();
+    this.selected = '';
+  }
+
   setColours(wall: number, floor: number): void {
     this.walls.color.setHex(WALL_COLOURS[wall % WALL_COLOURS.length]);
     this.floor.color.setHex(FLOOR_COLOURS[floor % FLOOR_COLOURS.length]);

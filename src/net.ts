@@ -33,6 +33,10 @@ export interface PlayerState {
   k: string;
   /** What they hold: 0-2 a blade, 3 the wand, -1 nothing. */
   w: number;
+  /** Whose house they are inside: a player id, or '' when outdoors. */
+  i: string;
+  /** 1 when they have not touched the controls for a few minutes. */
+  q: number;
 }
 
 export type NetMessage =
@@ -51,7 +55,9 @@ export type NetMessage =
   // Stars and chests someone picked up, so they vanish for everyone and everyone is rewarded.
   | { t: 'got'; ids: string[] }
   // One thing handed from one player to another.
-  | { t: 'give'; to: string; key: string };
+  | { t: 'give'; to: string; key: string }
+  // How a player has furnished their house, so friends can visit it.
+  | { t: 'home'; owned: string[]; layout: Record<string, [number, number, number]>; wall: number; floor: number };
 
 /** A thin wrapper over the WebSocket to the family's relay. */
 export class Net {
@@ -114,6 +120,8 @@ interface Peer {
   pet: Pet | null;
   /** The hat and held item last put on their model, so it is only redone when it changes. */
   gear: string;
+  /** What the marker over their head shows now: their face, or 💤 when away. */
+  badge: string;
   /** While an emoji they sent is showing instead of their face. */
   emoteTime: number;
 }
@@ -123,6 +131,8 @@ const PEER_ANIMS = ['Idle_A', 'Walking_A', 'Running_A', 'Jump_Idle', 'Crawling',
 /** The other players in the room, drawn as their chosen heroes and smoothed between updates. */
 export class Peers {
   private map = new Map<string, Peer>();
+  /** Whose house this player is in ('' outdoors), set every frame by the game. */
+  room = '';
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -142,7 +152,7 @@ export class Peers {
 
   /** The friends' faces in a row, for the room panel. */
   faces(): string {
-    return [...this.map.values()].map((p) => (p.name ? `${p.face} ${p.name}` : p.face)).join(' ');
+    return [...this.map.values()].map((p) => `${p.face}${p.state.q === 1 ? '💤' : ''}${p.name ? ` ${p.name}` : ''}`).join(' ');
   }
 
   /** Where skeletons can find each friend. */
@@ -152,6 +162,12 @@ export class Peers {
 
   positions(): { x: number; z: number; icon: string }[] {
     return [...this.map.values()].map((p) => ({ x: p.state.x, z: p.state.z, icon: p.face }));
+  }
+
+  /** A friend's face and name, for the sign on their house. */
+  who(id: string): { face: string; name: string } | null {
+    const p = this.map.get(id);
+    return p ? { face: p.face, name: p.name } : null;
   }
 
   /** The closest friend within reach, to hand something to. */
@@ -182,6 +198,15 @@ export class Peers {
     return p && p.vehicleName ? p.group.position : null;
   }
 
+  /** For tests: whether each friend is being drawn, and what is over their head. */
+  visibleDebug(): boolean[] {
+    return [...this.map.values()].map((p) => p.group.visible);
+  }
+
+  badgesDebug(): string {
+    return [...this.map.values()].map((p) => p.badge).join("");
+  }
+
   /** For tests: the hat and held item shown on each friend. */
   gearDebug(): string {
     return [...this.map.values()].map((p) => p.gear).join(";");
@@ -202,7 +227,7 @@ export class Peers {
       const label = makeLabel();
       group.add(marker, label);
       this.scene.add(group);
-      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, gear: '', emoteTime: 0 };
+      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, gear: '', badge: face, emoteTime: 0 };
       this.map.set(id, peer);
     }
     peer.state = state;
@@ -285,10 +310,18 @@ export class Peers {
       if (peer.emoteTime > 0) {
         peer.emoteTime -= dt;
         if (peer.emoteTime <= 0) {
-          peer.marker.material.map = emojiTexture(peer.face);
+          peer.badge = '';
           peer.marker.scale.setScalar(0.06);
         }
       }
+      // Asleep at the controls: a 💤 instead of their face.
+      const badge = peer.emoteTime > 0 ? '' : state.q === 1 ? '💤' : peer.face;
+      if (badge && badge !== peer.badge) {
+        peer.badge = badge;
+        peer.marker.material.map = emojiTexture(badge);
+      }
+      // Only draw friends who are in the same place: outdoors together, or in the same house.
+      group.visible = (state.i || '') === this.room;
       if (peer.actor) peer.actor.root.visible = peer.vehicleName === '' && state.r !== 1;
       peer.pet?.update(dt, p);
       // Dress them as they are dressed on their own screen.
