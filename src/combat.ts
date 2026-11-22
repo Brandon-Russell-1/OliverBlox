@@ -62,7 +62,6 @@ interface Orb {
   life: number;
 }
 
-const MAX_ENEMIES = 5;
 const SIGHT = 30;
 const ANIMS = ['Idle_A', 'Walking_A', 'Running_A', 'Melee_1H_Attack_Chop', 'Throw', 'Hit_A', 'Death_A'];
 const ONE_SHOT = new Set(['Melee_1H_Attack_Chop', 'Throw', 'Hit_A', 'Death_A']);
@@ -104,6 +103,8 @@ const round = (n: number): number => Math.round(n * 100) / 100;
 export class Enemies {
   /** True when another player is running the skeletons and this one only shows them. */
   remote = false;
+  /** How many skeletons may be about at once. Raised at night. */
+  maxEnemies = 4;
   private list: Enemy[] = [];
   private orbs: Orb[] = [];
   private spawnTimer = 4;
@@ -410,7 +411,7 @@ export class Enemies {
       this.spawnTimer = 3.5;
       // Appear near a random player who is out in the wilds.
       const wild = awake.filter((t) => !ctx.isSafe(t.pos.x, t.pos.z));
-      if (this.list.length < MAX_ENEMIES && wild.length > 0) {
+      if (this.list.length < this.maxEnemies && wild.length > 0) {
         const t = wild[Math.floor(Math.random() * wild.length)];
         const angle = Math.random() * Math.PI * 2;
         const dist = 20 + Math.random() * 14;

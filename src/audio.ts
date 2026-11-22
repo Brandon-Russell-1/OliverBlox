@@ -10,6 +10,11 @@ export function unlockAudio(): void {
   }
 }
 
+/** The shared sound system, once a tap has unlocked it. */
+export function audioContext(): AudioContext | null {
+  return ctx;
+}
+
 function tone(freq: number, dur: number, type: OscillatorType = 'sine', delay = 0, gain = 0.15): void {
   if (!ctx) return;
   const t0 = ctx.currentTime + delay;

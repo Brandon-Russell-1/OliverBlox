@@ -15,6 +15,9 @@ import { Actor } from './actor';
 import { Enemies, type EnemyContext, type Target } from './combat';
 import { emojiTexture, faceFor, makeMarker, EMOTES } from './emoji';
 import { getPlayerName, setPlayerName } from './profile';
+import { music } from './music';
+import { loadSettings, saveSettings, addPlayTime, minutesToday } from './settings';
+import { makeStar } from './models';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio } from './audio';
 import { makeRobot, makeClouds } from './models';
@@ -175,7 +178,8 @@ const sky = new THREE.Mesh(
 );
 scene.add(sky);
 
-scene.add(new THREE.HemisphereLight(0xdcefff, 0x9c9074, 1.25));
+const hemi = new THREE.HemisphereLight(0xdcefff, 0x9c9074, 1.25);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff3d6, 2.1);
 sun.castShadow = true;
 sun.shadow.mapSize.setScalar(isTouch ? 1024 : 2048);
@@ -187,6 +191,41 @@ sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.5;
 scene.add(sun, sun.target);
 const SUN_OFFSET = new THREE.Vector3(70, 120, 45);
+
+// ---------- day and night ----------
+/** Seconds for a whole day. About two thirds of it is daylight. */
+const DAY_LENGTH = 480;
+const SKY = {
+  dayTop: new THREE.Color(0x2674f0),
+  dayBottom: new THREE.Color(HORIZON),
+  nightTop: new THREE.Color(0x050a26),
+  nightBottom: new THREE.Color(0x1b2a5c),
+  dusk: new THREE.Color(0xffa25e),
+  sun: new THREE.Color(0xfff3d6),
+  moon: new THREE.Color(0x9fb4ff),
+};
+const skyUniforms = sky.material.uniforms;
+/** Starts in the morning. */
+let dayClock = 40;
+/** 0 in full daylight, 1 in the middle of the night. */
+let night = 0;
+function updateDay(dt: number): void {
+  dayClock = (dayClock + dt) % DAY_LENGTH;
+  const angle = (dayClock / DAY_LENGTH) * Math.PI * 2;
+  // The sun's height, shifted so the day lasts longer than the night.
+  const height = Math.sin(angle) + 0.35;
+  night = 1 - THREE.MathUtils.smoothstep(height, -0.2, 0.15);
+  const dusk = Math.max(0, 1 - Math.abs(height) / 0.3);
+  skyUniforms.top.value.lerpColors(SKY.dayTop, SKY.nightTop, night);
+  skyUniforms.bottom.value.lerpColors(SKY.dayBottom, SKY.nightBottom, night).lerp(SKY.dusk, dusk * 0.45);
+  (scene.fog as THREE.Fog).color.copy(skyUniforms.bottom.value);
+  // Never pitch dark: the moon takes over, softer and bluer, so a small child can still see.
+  sun.color.lerpColors(SKY.sun, SKY.moon, night);
+  sun.intensity = 2.1 - 1.5 * night;
+  hemi.intensity = 1.25 - 0.6 * night;
+  SUN_OFFSET.set(Math.cos(angle) * 100 * (height >= 0 ? 1 : -1), 45 + Math.abs(height) * 90, 45);
+  music.setNight(night > 0.5);
+}
 
 const water = new THREE.Mesh(
   new THREE.PlaneGeometry(3000, 3000),
@@ -265,7 +304,9 @@ const actionEl = $('action');
 const bubble = $('bubble');
 const garageEl = $('garage');
 
-const starTotal = (): number => collected.size + bonusStars;
+/** Chests share the "collected" list with stars but are not stars. */
+let chestsOpened = [...collected].filter((id) => id.startsWith('c')).length;
+const starTotal = (): number => collected.size - chestsOpened + bonusStars;
 function showStars(pop: boolean): void {
   starCountEl.textContent = String(starTotal());
   if (!pop) return;
@@ -288,6 +329,8 @@ function showQuests(): void {
       const chip = document.createElement('div');
       chip.className = q.have >= q.need ? 'quest done' : 'quest';
       chip.textContent = `${QUEST_ICONS[q.type]} ${q.have}/${q.need}`;
+      // A colour job shows its colour, so no reading is needed.
+      if (q.k) chip.style.borderLeft = `22px solid #${BLOCK_COLORS[q.k].toString(16).padStart(6, '0')}`;
       return chip;
     }),
   );
@@ -384,6 +427,21 @@ chat.context = (personaId) => ({
   quests: quests.list(),
 });
 
+const parent = loadSettings();
+const breakEl = $('break');
+const setMusic = $<HTMLInputElement>('set-music');
+const setFighting = $<HTMLInputElement>('set-fighting');
+const setLimit = $<HTMLInputElement>('set-limit');
+function applySettings(): void {
+  parent.music = setMusic.checked;
+  parent.fighting = setFighting.checked;
+  parent.limit = Math.max(0, Math.floor(Number(setLimit.value) || 0));
+  saveSettings(parent);
+  music.setEnabled(parent.music && started);
+  breakEl.hidden = parent.limit === 0 || minutesToday() < parent.limit;
+}
+for (const input of [setMusic, setFighting, setLimit]) input.addEventListener('change', applySettings);
+
 // Each player picks their own name on the start screen; it is kept on this device.
 const nameInput = $<HTMLInputElement>('player-name');
 nameInput.value = getPlayerName();
@@ -397,6 +455,7 @@ function start(): void {
   setPlayerName(nameInput.value);
   started = true;
   unlockAudio();
+  music.setEnabled(parent.music);
   $('start').hidden = true;
   $('hud').hidden = false;
   speak(`Hi${getPlayerName() ? ` ${getPlayerName()}` : ''}! I am Bolt! Let us go exploring!`);
@@ -461,6 +520,10 @@ gear.addEventListener('pointerdown', (e) => {
   gearTimer = window.setTimeout(() => {
     gear.classList.remove('holding');
     gearHint.hidden = true;
+    setMusic.checked = parent.music;
+    setFighting.checked = parent.fighting;
+    setLimit.value = String(parent.limit);
+    $('played').textContent = `Played today: ${minutesToday()} minutes`;
     openParentPanel();
   }, 1500);
 });
@@ -594,7 +657,7 @@ async function createGame(assets: Assets): Promise<Game> {
 
   // ---- playing together: other players in the same room, and shared building ----
   const net = new Net();
-  const peers = new Peers(scene, assets.clips);
+  const peers = new Peers(scene, assets.clips, assets.pets, new Set(GARAGE.map((g) => g.name)));
   const greeted = new Set<string>();
   let netTimer = 0;
   net.onMessage = (from, msg) => {
@@ -609,11 +672,17 @@ async function createGame(assets: Assets): Promise<Game> {
       peers.remove(from);
       greeted.delete(from);
     } else if (msg.t === 'b') {
-      if ([msg.x, msg.y, msg.z, msg.k].every(Number.isInteger)) blocks.set(msg.x, msg.y, msg.z, msg.k);
+      if ([msg.x, msg.y, msg.z, msg.k].every(Number.isInteger) && blocks.set(msg.x, msg.y, msg.z, msg.k)) {
+        // Blocks a friend places count toward building jobs too.
+        if (msg.k > 0 && quests.add('blocks', 1, msg.k)) showQuests();
+      }
       dirty = true;
     } else if (msg.t === 'B' && Array.isArray(msg.list)) {
       blocks.load(msg.list.slice(0, 5000).filter((b) => Array.isArray(b) && b.length === 4 && b.every(Number.isInteger)));
       dirty = true;
+    } else if (msg.t === 'got') {
+      // A friend picked something up: it goes for us too, and we share the prize.
+      if (Array.isArray(msg.ids)) gotPickups(msg.ids.slice(0, 20).filter((id) => typeof id === 'string' && id.length < 24), false);
     } else if (msg.t === 'hello') {
       selfId = String(msg.id);
     } else if (msg.t === 'en') {
@@ -668,6 +737,12 @@ async function createGame(assets: Assets): Promise<Game> {
 
   // ---- program Bolt ----
   let coding = false;
+  let puzzleLevel = 0;
+  // The star Bolt has to reach in a puzzle.
+  const goalStar = makeStar();
+  goalStar.scale.setScalar(1.6);
+  goalStar.visible = false;
+  scene.add(goalStar);
   const codePos = new THREE.Vector3();
   let codeTurns = 0;
   const coder = new Coder({
@@ -687,19 +762,65 @@ async function createGame(assets: Assets): Promise<Game> {
       const k = tool >= FIRST_BLOCK ? HOTBAR[tool - FIRST_BLOCK] : HOTBAR[0];
       if (!blocks.set(x, y, z, k)) return;
       net.send({ t: 'b', x, y, z, k });
-      if (quests.add('blocks', 1)) showQuests();
+      if (quests.add('blocks', 1, k)) showQuests();
       sfx.place();
       dirty = true;
     },
-    running: (on) => {
+    busy: (on) => {
       coding = on;
       if (on) sfx.chirp();
-      else sfx.win();
+    },
+    goal: (cell) => {
+      goalStar.visible = cell !== null;
+      if (cell) goalStar.position.set(cell.x + 0.5, groundAt(cell.x + 0.5, cell.z + 0.5) + 1.2, cell.z + 0.5);
+    },
+    solved: (level) => {
+      puzzleLevel = level;
+      coins += 3;
+      showCoins();
+      sfx.win();
+      speak('You did it! Bolt reached the star. Here is a harder one!');
+      cheerUntil = now + 2.5;
+      dirty = true;
+    },
+    missed: () => {
+      sfx.remove();
+      speak('Not quite. Try again!');
     },
   });
   $('code-btn').addEventListener('click', () => {
     if (!inside) coder.toggle();
   });
+
+  /** Stars and chests picked up, by us or by a friend in the room. Everyone shares the prize. */
+  function gotPickups(ids: string[], mine: boolean): void {
+    let stars = 0;
+    let chests = 0;
+    for (const id of ids) {
+      // Our own are already marked as taken; a friend's are taken here.
+      if (!mine && !terrain.take(id)) continue;
+      if (id.startsWith('c')) chests++;
+      else stars++;
+    }
+    if (chests > 0) {
+      chestsOpened += chests;
+      coins += chests * 8;
+      showCoins();
+      sfx.win();
+      speak('Treasure! Eight coins!');
+    }
+    if (stars > 0) {
+      if (quests.add('stars', stars)) showQuests();
+      sfx.star();
+      // Counting out loud as the stars add up.
+      if (chests === 0) speak(String(starTotal()));
+      bubbleUntil = now + 3;
+    }
+    if (stars + chests === 0) return;
+    showStars(true);
+    if (mine) cheerUntil = now + 2.2;
+    dirty = true;
+  }
 
   /** Until this time a one-shot animation (swing, cast, flinch) owns the hero's pose. */
   let busyUntil = 0;
@@ -1040,7 +1161,7 @@ async function createGame(assets: Assets): Promise<Game> {
   const boltMaterial = new THREE.MeshBasicMaterial({ color: 0x7df9ff });
 
   const isSafe = (x: number, z: number): boolean => {
-    if (Math.hypot(x, z) < 110) return true;
+    if (!parent.fighting || Math.hypot(x, z) < 110) return true;
     const v = nearestVillage(x, z);
     return v !== null && v.kind === 'village' && Math.hypot(v.x - x, v.z - z) < VILLAGE_RADIUS + 55;
   };
@@ -1192,6 +1313,7 @@ async function createGame(assets: Assets): Promise<Game> {
         if (
           fort?.kind === 'fort' &&
           t.targetable &&
+          parent.fighting &&
           !clearedForts.has(fort.id) &&
           !enemies.bossAlive &&
           Math.hypot(fort.x - t.pos.x, fort.z - t.pos.z) < 60
@@ -1201,6 +1323,7 @@ async function createGame(assets: Assets): Promise<Game> {
         }
       }
     }
+    enemies.maxEnemies = night > 0.5 ? 6 : 3;
     enemies.update(dt, targets, enemyContext);
     netEnemyTimer -= dt;
     if (!enemies.remote && net.connected && netEnemyTimer <= 0) {
@@ -1241,7 +1364,7 @@ async function createGame(assets: Assets): Promise<Game> {
     if (bodyTouchesCell(player, hit.px, hit.py, hit.pz)) return;
     if (blocks.set(hit.px, hit.py, hit.pz, HOTBAR[tool - FIRST_BLOCK])) {
       net.send({ t: 'b', x: hit.px, y: hit.py, z: hit.pz, k: HOTBAR[tool - FIRST_BLOCK] });
-      if (quests.add('blocks', 1)) showQuests();
+      if (quests.add('blocks', 1, HOTBAR[tool - FIRST_BLOCK])) showQuests();
       sfx.place();
       dirty = true;
     }
@@ -1486,6 +1609,10 @@ async function createGame(assets: Assets): Promise<Game> {
         enemies,
         enemyContext,
         terrain,
+        peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
+        setClock: (seconds: number) => {
+          dayClock = seconds;
+        },
         state: () => ({
           flying,
           crawling,
@@ -1510,6 +1637,8 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          night: +night.toFixed(2),
+          level: puzzleLevel,
           host: !enemies.remote,
           selfId,
         }),
@@ -1537,26 +1666,16 @@ async function createGame(assets: Assets): Promise<Game> {
         updateCombat(dt);
 
         const who = driving ? carPos : player.pos;
-        const found = terrain.collect(who, driving ? 3.5 : 2.2);
-        if (found > 0) {
-          if (quests.add('stars', found)) showQuests();
-          showStars(true);
-          sfx.star();
-          // Counting out loud as the stars add up.
-          speak(String(starTotal()));
-          cheerUntil = now + 2.2;
-          bubbleUntil = now + 3;
-          dirty = true;
+        const picked = [...terrain.collect(who, driving ? 3.5 : 2.2), ...terrain.openChests(who, 2.8)];
+        if (picked.length > 0) {
+          net.send({ t: 'got', ids: picked });
+          gotPickups(picked, true);
         }
-
-        const opened = terrain.openChests(who, 2.8);
-        if (opened > 0) {
-          coins += opened * 8;
-          showCoins();
-          sfx.win();
-          speak('Treasure! Eight coins!');
-          cheerUntil = now + 2;
-          dirty = true;
+        // Count play time, and call a break when the day's limit is used up.
+        addPlayTime(dt);
+        if (parent.limit > 0 && breakEl.hidden && minutesToday() >= parent.limit) {
+          breakEl.hidden = false;
+          speak('Time for a break! See you later.');
         }
         coder.update(dt);
         // Tell the other players where we are, ten times a second.
@@ -1576,6 +1695,8 @@ async function createGame(assets: Assets): Promise<Game> {
             h: CHARACTERS[heroIndex],
             g: targetable ? 1 : 0,
             n: getPlayerName(),
+            v: driving ? vehicleName : '',
+            p: petSpecies,
           });
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
@@ -1604,6 +1725,7 @@ async function createGame(assets: Assets): Promise<Game> {
       pet?.update(dt, inside ?? who);
       peers.update(dt);
       if (selfBubble.visible && now > emoteUntil) selfBubble.visible = false;
+      if (goalStar.visible) goalStar.rotation.y = now * 2;
       updateVillagers(dt, who);
       for (const s of terrain.stars) {
         const mesh = s.group.children[0];
@@ -1619,6 +1741,7 @@ async function createGame(assets: Assets): Promise<Game> {
       water.position.x = who.x;
       water.position.z = who.z;
       sun.target.position.copy(who);
+      updateDay(dt);
       sun.position.copy(who).add(SUN_OFFSET);
       for (const c of clouds.children) {
         c.position.x += dt * 1.5;
@@ -1671,3 +1794,8 @@ loadAssets((fraction) => {
     console.error(err);
     $('loading').textContent = '⚠️';
   });
+
+// Keep a copy of the game on the device so it loads quickly and opens without internet.
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => undefined);
+}

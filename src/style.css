@@ -638,6 +638,70 @@ body:not(.touch) #fly {
   font-weight: 700;
 }
 
+#parent-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+#parent #parent-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+#parent #parent-toggles input {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+}
+
+#parent #parent-toggles input[type='number'] {
+  width: 76px;
+}
+
+#break {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(20, 30, 80, 0.94);
+  color: #fff;
+  font-size: 120px;
+}
+
+#break span {
+  font-size: 36px;
+  font-weight: 800;
+}
+
+#break[hidden] {
+  display: none;
+}
+
+/* The grown-ups button and panel stay reachable over the break screen. */
+#gear,
+#gear-hint,
+#parent {
+  z-index: 7;
+}
+
+#code .on {
+  background: #7df0a0;
+}
+
+.quest {
+  box-sizing: content-box;
+}
+
 #parent-row {
   display: flex;
   gap: 8px;

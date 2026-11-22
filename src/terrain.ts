@@ -496,20 +496,12 @@ export class Terrain {
     if (i >= 0) this.stars.splice(i, 1);
   }
 
-  /** Pick up any star within reach. Returns how many were collected. */
-  collect(pos: THREE.Vector3, reach: number): number {
-    let n = 0;
-    for (let i = this.stars.length - 1; i >= 0; i--) {
-      const s = this.stars[i];
-      if (Math.hypot(s.pos.x - pos.x, s.pos.z - pos.z) < reach && Math.abs(s.pos.y - pos.y) < 5) {
-        this.collected.add(s.id);
-        const chunk = this.chunks.get(s.id);
-        if (chunk) chunk.star = null;
-        this.removeStar(s);
-        n++;
-      }
-    }
-    return n;
+  /** Pick up any star within reach. Returns the ids collected. */
+  collect(pos: THREE.Vector3, reach: number): string[] {
+    const near = this.stars.filter(
+      (s) => Math.hypot(s.pos.x - pos.x, s.pos.z - pos.z) < reach && Math.abs(s.pos.y - pos.y) < 5,
+    );
+    return near.map((s) => s.id).filter((id) => this.take(id));
   }
 
   private removeChest(chest: Star): void {
@@ -518,20 +510,31 @@ export class Terrain {
     if (i >= 0) this.chests.splice(i, 1);
   }
 
-  /** Open any treasure chest within reach. Returns how many were opened. */
-  openChests(pos: THREE.Vector3, reach: number): number {
-    let n = 0;
-    for (let i = this.chests.length - 1; i >= 0; i--) {
-      const c = this.chests[i];
-      if (Math.hypot(c.pos.x - pos.x, c.pos.z - pos.z) < reach && Math.abs(c.pos.y - pos.y) < 5) {
-        this.collected.add(c.id);
-        const chunk = this.chunks.get(c.id.slice(1));
-        if (chunk) chunk.chest = null;
-        this.removeChest(c);
-        n++;
-      }
+  /** Open any treasure chest within reach. Returns the ids opened. */
+  openChests(pos: THREE.Vector3, reach: number): string[] {
+    const near = this.chests.filter(
+      (c) => Math.hypot(c.pos.x - pos.x, c.pos.z - pos.z) < reach && Math.abs(c.pos.y - pos.y) < 5,
+    );
+    return near.map((c) => c.id).filter((id) => this.take(id));
+  }
+
+  /**
+   * Mark a star or chest as taken and remove it from the world, whoever took it.
+   * Chest ids start with "c". Returns false if it was already gone.
+   */
+  take(id: string): boolean {
+    if (this.collected.has(id)) return false;
+    this.collected.add(id);
+    const isChest = id.startsWith('c');
+    const chunk = this.chunks.get(isChest ? id.slice(1) : id);
+    if (chunk && isChest && chunk.chest) {
+      this.removeChest(chunk.chest);
+      chunk.chest = null;
+    } else if (chunk && !isChest && chunk.star) {
+      this.removeStar(chunk.star);
+      chunk.star = null;
     }
-    return n;
+    return true;
   }
 
   /** Push a circle out of tree trunks and big rocks. Returns true if it was touching one. */

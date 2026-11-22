@@ -43,6 +43,7 @@
           <span id="code-palette"></span>
           <button id="code-undo" aria-label="Undo">⌫</button>
           <button id="code-repeat" aria-label="Repeat"></button>
+          <button id="code-goal" aria-label="Puzzle">🎯</button>
           <button id="code-run" aria-label="Run">▶️</button>
           <button id="code-close" aria-label="Close">✖</button>
         </div>
@@ -75,6 +76,12 @@
         <label>Voice
           <span id="voice-row"><select id="voice"></select><button id="voice-test" type="button">Test</button></span>
         </label>
+        <div id="parent-toggles">
+          <label><input id="set-music" type="checkbox" /> Music</label>
+          <label><input id="set-fighting" type="checkbox" /> Skeletons and fighting</label>
+          <label>Minutes a day (0 = no limit) <input id="set-limit" type="number" min="0" max="600" step="5" /></label>
+          <span id="played"></span>
+        </div>
         <label>What has been said<textarea id="ai-log" readonly rows="6"></textarea></label>
         <div id="parent-row">
           <button id="parent-save">Save</button>
@@ -83,6 +90,8 @@
         </div>
       </div>
     </div>
+
+    <div id="break" hidden>😴<span>Time for a break!</span></div>
 
     <div id="start">
       <h1><img src="/icon.svg" alt="" />OliverBlox</h1>

@@ -3,6 +3,8 @@ import { Actor } from './actor';
 import { loadModel, CHARACTERS } from './assets';
 import { emojiTexture, faceFor, makeMarker, makeLabel, setLabel } from './emoji';
 import { cleanName } from './profile';
+import { Pet } from './animals';
+import type { AnimatedModel } from './assets';
 import type { EnemySnapshot, Target } from './combat';
 
 /** What each player tells the others about themselves, several times a second. */
@@ -20,6 +22,10 @@ export interface PlayerState {
   g: number;
   /** The name they picked, if any. */
   n: string;
+  /** The vehicle they are driving, or ''. */
+  v: string;
+  /** Their pet's species, or -1. */
+  p: number;
 }
 
 export type NetMessage =
@@ -34,7 +40,9 @@ export type NetMessage =
   | { t: 'hit'; to: string; x: number; z: number }
   | { t: 'won'; boss: boolean; fort: string }
   // An emoji from the fixed list, by position in it.
-  | { t: 'e'; i: number };
+  | { t: 'e'; i: number }
+  // Stars and chests someone picked up, so they vanish for everyone and everyone is rewarded.
+  | { t: 'got'; ids: string[] };
 
 /** A thin wrapper over the WebSocket to the family's relay. */
 export class Net {
@@ -91,6 +99,10 @@ interface Peer {
   marker: THREE.Sprite;
   label: THREE.Sprite;
   name: string;
+  vehicleName: string;
+  vehicle: THREE.Object3D | null;
+  petSpecies: number;
+  pet: Pet | null;
   /** While an emoji they sent is showing instead of their face. */
   emoteTime: number;
 }
@@ -104,6 +116,9 @@ export class Peers {
   constructor(
     private readonly scene: THREE.Scene,
     private readonly clips: Map<string, THREE.AnimationClip>,
+    private readonly pets: AnimatedModel[],
+    /** The only vehicle models a friend's message may ask us to load. */
+    private readonly vehicles: Set<string>,
   ) {}
 
   get count(): number {
@@ -128,6 +143,11 @@ export class Peers {
     return [...this.map.values()].map((p) => ({ x: p.state.x, z: p.state.z, icon: p.face }));
   }
 
+  /** For tests: what each friend is driving and which pet they have. */
+  vehiclesDebug(): string[] {
+    return [...this.map.values()].map((p) => (p.vehicleName || "on foot") + " pet:" + p.petSpecies);
+  }
+
   set(id: string, state: PlayerState): void {
     let peer = this.map.get(id);
     if (!peer) {
@@ -138,11 +158,35 @@ export class Peers {
       const label = makeLabel();
       group.add(marker, label);
       this.scene.add(group);
-      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', emoteTime: 0 };
+      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, emoteTime: 0 };
       this.map.set(id, peer);
     }
     peer.state = state;
     peer.pos.set(state.x, state.y, state.z);
+    // In a car or boat: show that instead of the hero.
+    const v = this.vehicles.has(state.v) ? state.v : '';
+    if (v !== peer.vehicleName) {
+      peer.vehicleName = v;
+      peer.vehicle?.removeFromParent();
+      peer.vehicle = null;
+      if (v) {
+        const target = peer;
+        const boat = v.startsWith('boat');
+        void loadModel(`${boat ? 'boat' : 'car'}/${v}.glb`).then((gltf) => {
+          if (target.vehicleName !== v) return;
+          target.vehicle = gltf.scene.clone(true);
+          target.vehicle.scale.setScalar(2);
+          target.vehicle.position.y = boat ? -0.25 : 0.6;
+          target.group.add(target.vehicle);
+        });
+      }
+    }
+    const species = Number.isInteger(state.p) && this.pets[state.p] ? state.p : -1;
+    if (species !== peer.petSpecies) {
+      peer.petSpecies = species;
+      peer.pet?.dispose();
+      peer.pet = species >= 0 ? new Pet(this.scene, this.pets[species], peer.pos) : null;
+    }
     const name = cleanName(state.n);
     if (name !== peer.name) {
       peer.name = name;
@@ -174,6 +218,7 @@ export class Peers {
   remove(id: string): void {
     const peer = this.map.get(id);
     if (peer) this.scene.remove(peer.group);
+    peer?.pet?.dispose();
     this.map.delete(id);
   }
 
@@ -198,6 +243,8 @@ export class Peers {
           peer.marker.scale.setScalar(0.06);
         }
       }
+      if (peer.actor) peer.actor.root.visible = peer.vehicleName === '';
+      peer.pet?.update(dt, p);
       peer.actor?.play(state.a);
       peer.actor?.update(dt);
     }

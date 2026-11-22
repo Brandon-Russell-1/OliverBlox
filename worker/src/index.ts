@@ -102,6 +102,7 @@ const FALLBACK_REPLY = 'Hmm, let us talk about something else. What is your favo
 
 const HEROES = ['Rogue', 'Knight', 'Mage', 'Barbarian', 'Ranger', 'Druid', 'Engineer'];
 const PET_KINDS = ['dog', 'cat', 'bunny', 'cow', 'deer', 'fox', 'pig', 'chick'];
+const COLOUR_NAMES = ['', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'white', 'brown'];
 const SWORD_NAMES = ['a sword', 'an axe', 'a great sword'];
 const JOB_GIVERS: Record<string, string> = { mage: 'Mira', barbarian: 'Bram', druid: 'Fern' };
 
@@ -121,6 +122,7 @@ function describeJob(raw: unknown): { goal: string; have: number; need: number }
     stars: `find ${need} star${s}`,
     skeletons: `bonk ${need} skeleton${s}`,
     blocks: `build with ${need} block${s}`,
+    colour: `build with ${need} ${COLOUR_NAMES[count((q as { k?: unknown }).k, 8) ?? 1] ?? 'red'} block${s}`,
     pet: 'make friends with an animal',
   };
   const goal = typeof q.type === 'string' ? goals[q.type] : undefined;

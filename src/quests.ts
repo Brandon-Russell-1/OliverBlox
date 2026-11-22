@@ -1,4 +1,4 @@
-export type QuestType = 'stars' | 'skeletons' | 'blocks' | 'pet';
+export type QuestType = 'stars' | 'skeletons' | 'blocks' | 'colour' | 'pet';
 
 export interface Quest {
   type: QuestType;
@@ -6,6 +6,8 @@ export interface Quest {
   have: number;
   /** Coins paid when it is handed in. */
   reward: number;
+  /** For colour jobs: which block colour counts. */
+  k?: number;
 }
 
 export interface QuestSave {
@@ -18,6 +20,7 @@ export const QUEST_ICONS: Record<QuestType, string> = {
   stars: '⭐',
   skeletons: '💀',
   blocks: '🧱',
+  colour: '🎨',
   pet: '🐾',
 };
 
@@ -25,9 +28,12 @@ const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'sev
 const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 const plural = (n: number, one: string, many: string): string => `${word(n)} ${n === 1 ? one : many}`;
 
+/** Names of the block colours, by block type. */
+export const COLOUR_NAMES = ['', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'white', 'brown'];
+
 /** Which kinds of job each villager hands out, in turn. */
 const JOBS: Record<string, QuestType[]> = {
-  mage: ['stars', 'blocks'],
+  mage: ['stars', 'colour', 'blocks'],
   barbarian: ['skeletons'],
   druid: ['pet', 'stars'],
 };
@@ -44,6 +50,9 @@ function makeQuest(persona: string, level: number): Quest {
       return { type, need: Math.min(2 + round, 8), have: 0, reward: 6 + round * 2 };
     case 'blocks':
       return { type, need: Math.min(5 + round * 2, 15), have: 0, reward: 5 + round };
+    case 'colour':
+      // A different colour each time round: red, then orange, yellow, green, blue, purple.
+      return { type, need: Math.min(3 + round, 8), have: 0, reward: 5 + round, k: 1 + (round % 6) };
     case 'pet':
       return { type, need: 1, have: 0, reward: 6 };
   }
@@ -57,6 +66,8 @@ function ask(q: Quest): string {
       return `Those silly skeletons! Can you bonk ${plural(q.need, 'skeleton', 'skeletons')}?`;
     case 'blocks':
       return `Can you build something with ${plural(q.need, 'block', 'blocks')}?`;
+    case 'colour':
+      return `I love ${COLOUR_NAMES[q.k ?? 1]}! Can you build with ${word(q.need)} ${COLOUR_NAMES[q.k ?? 1]} blocks?`;
     case 'pet':
       return 'The animals want a friend. Walk up to one and tap the paw button!';
   }
@@ -65,7 +76,13 @@ function ask(q: Quest): string {
 function remind(q: Quest): string {
   const left = q.need - q.have;
   if (q.type === 'pet') return 'Find an animal and tap the paw button to make friends.';
-  const thing = { stars: ['star', 'stars'], skeletons: ['skeleton', 'skeletons'], blocks: ['block', 'blocks'] }[q.type];
+  const colour = `${COLOUR_NAMES[q.k ?? 1]} block`;
+  const thing = {
+    stars: ['star', 'stars'],
+    skeletons: ['skeleton', 'skeletons'],
+    blocks: ['block', 'blocks'],
+    colour: [colour, `${colour}s`],
+  }[q.type];
   const togo = plural(left, thing[0], thing[1]);
   return `You have ${word(q.have)}. ${togo[0].toUpperCase()}${togo.slice(1)} to go!`;
 }
@@ -106,10 +123,12 @@ export class Quests {
   }
 
   /** Count progress toward every active quest of a kind. Returns true if anything changed. */
-  add(type: QuestType, n: number): boolean {
+  add(type: QuestType, n: number, blockColour?: number): boolean {
     let changed = false;
     for (const q of Object.values(this.active)) {
-      if (q.type !== type || q.have >= q.need) continue;
+      // A colour job counts blocks too, but only ones of its colour.
+      const counts = q.type === type || (type === 'blocks' && q.type === 'colour' && q.k === blockColour);
+      if (!counts || q.have >= q.need) continue;
       q.have = Math.min(q.need, q.have + n);
       changed = true;
     }
