@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
-import { Terrain, groundAt, nearestVillage, SEA_LEVEL, VILLAGE_RADIUS, type Village } from './terrain';
+import { Terrain, groundAt, nearestVillage, villagesNear, SEA_LEVEL, VILLAGE_RADIUS, type Village } from './terrain';
+import { MiniMap, type MapIcon } from './map';
 import { Blocks, HOTBAR, BLOCK_COLORS } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
@@ -1143,6 +1144,18 @@ async function createGame(assets: Assets): Promise<Game> {
 
   let actionShown = '';
 
+  // ---- map: where the villages, stars and his things are ----
+  const miniMap = new MiniMap($<HTMLCanvasElement>('map'));
+  function updateMap(dt: number, who: THREE.Vector3): void {
+    const icons: MapIcon[] = [];
+    for (const s of terrain.stars) icons.push({ x: s.pos.x, z: s.pos.z, icon: '⭐' });
+    if (!driving) icons.push({ x: carPos.x, z: carPos.z, icon: vehicleKind === 'boat' ? '⛵' : '🚗' });
+    // Only the closest village is pinned to the rim, so the arrow to follow is never in doubt.
+    const closest = nearestVillage(who.x, who.z);
+    for (const v of villagesNear(who.x, who.z)) icons.push({ x: v.x, z: v.z, icon: '🏠', pin: v === closest });
+    miniMap.update(dt, who.x, who.z, camYaw, driving ? carHeading : facing, icons);
+  }
+
   // Test hook: add ?debug to the address to inspect or move things from the console.
   if (new URLSearchParams(location.search).has('debug')) {
     Object.assign(window, {
@@ -1241,6 +1254,7 @@ async function createGame(assets: Assets): Promise<Game> {
       }
       updateCamera(dt, who);
       updateBolt(dt, who);
+      if (started) updateMap(dt, who);
 
       // Sky, sea, clouds and the sun's shadow all travel with the player.
       sky.position.copy(camera.position);

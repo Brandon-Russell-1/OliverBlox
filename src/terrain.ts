@@ -99,6 +99,20 @@ export function nearestVillage(x: number, z: number): Village | null {
   return best;
 }
 
+/** Every village in the regions around a point, for the map. */
+export function villagesNear(x: number, z: number): Village[] {
+  const rx = Math.floor(x / REGION);
+  const rz = Math.floor(z / REGION);
+  const found: Village[] = [];
+  for (let dz = -2; dz <= 2; dz++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const v = villageIn(rx + dx, rz + dz);
+      if (v) found.push(v);
+    }
+  }
+  return found;
+}
+
 /** Land shape with a level patch pressed into it wherever a village stands. */
 function rawHeight(x: number, z: number): number {
   const h = baseHeight(x, z);

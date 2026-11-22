@@ -21,6 +21,7 @@ An endless world of meadows, forests, beaches, sea and snowy mountains, with vil
 | Vehicles | Car button (top right) gives any car or boat | Same; E gets in and out |
 | Talk, shop, befriend | Robot button for Bolt; the yellow button near a villager, shopkeeper or animal | Same; E for the yellow button |
 
+- **Map:** the round map in the top right turns with the view, so up on the map is straight ahead. The 🏠 on its rim points to the nearest village. Tap the map to make it big.
 - **Quests:** villagers with a ❗ over their head have a job (find stars, bonk skeletons, build with blocks, befriend an animal). Chips on the left show progress; go back when they show 🎁 to collect coins.
 - **Shop:** the villager with the 🛒 sells an axe, a great sword, extra hearts and running shoes for coins. Skeletons drop a coin each too.
 - **Pets:** walk up to any animal and tap the paw button; it follows him from then on.
