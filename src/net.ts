@@ -261,11 +261,12 @@ export class Peers {
       if (v) {
         const target = peer;
         const boat = v.startsWith('boat');
-        void loadModel(`${boat ? 'boat' : 'car'}/${v}.glb`).then((gltf) => {
+        const horse = v === 'horse';
+        void loadModel(horse ? 'village/horse_A.gltf' : `${boat ? 'boat' : 'car'}/${v}.glb`).then((gltf) => {
           if (target.vehicleName !== v) return;
           target.vehicle = gltf.scene.clone(true);
-          target.vehicle.scale.setScalar(2);
-          target.vehicle.position.y = boat ? -0.25 : 0.6;
+          target.vehicle.scale.setScalar(horse ? 4.8 : 2);
+          target.vehicle.position.y = horse ? 0 : boat ? -0.25 : 0.6;
           target.group.add(target.vehicle);
         });
       }
@@ -344,7 +345,12 @@ export class Peers {
       }
       // Only draw friends who are in the same place: outdoors together, or in the same house.
       group.visible = (state.i || '') === this.room;
-      if (peer.actor) peer.actor.root.visible = peer.vehicleName === '' && state.r !== 1;
+      // A rider is drawn sitting on the horse; in a car or boat the hero is hidden.
+      const mounted = peer.vehicleName === 'horse';
+      if (peer.actor) {
+        peer.actor.root.visible = (peer.vehicleName === '' || mounted) && state.r !== 1;
+        peer.actor.root.position.y = mounted ? 1.1 : 0;
+      }
       peer.pet?.update(dt, p);
       // Dress them as they are dressed on their own screen.
       const hat = HATS.includes(state.k) ? state.k : '';

@@ -37,6 +37,13 @@ const JUMP_SPEED = 9.8;
 const CAR_MAX = 18;
 const BOAT_MAX = 13;
 const VEHICLE_SCALE = 2;
+const HORSE_MAX = 14;
+const HORSE_SCALE = 4.8;
+/** How high above the ground the rider's feet hang. */
+const SADDLE = 1.1;
+/** The most extra hearts and armor the market sells. */
+const MAX_EXTRA_HEARTS = 5;
+const MAX_ARMOR = 3;
 /** Water deeper than this is for swimming, shallower is for wading. */
 const SWIM_DEPTH = 1.3;
 /** Where the feet float while swimming, so the head stays above water. */
@@ -66,7 +73,7 @@ const HERO_ANIMS = [
 
 interface GarageItem {
   name: string;
-  kind: 'car' | 'boat' | 'plane';
+  kind: 'car' | 'boat' | 'plane' | 'horse';
   icon: string;
   /** Coins to unlock it; 0 for the ones he starts with. */
   price: number;
@@ -80,6 +87,7 @@ const GARAGE: GarageItem[] = [
   { name: 'truck', kind: 'car', icon: '🛻', price: 10 },
   { name: 'firetruck', kind: 'car', icon: '🚒', price: 12 },
   { name: 'race', kind: 'car', icon: '🏎️', price: 20 },
+  { name: 'horse', kind: 'horse', icon: '🐴', price: 25 },
   { name: 'plane', kind: 'plane', icon: '✈️', price: 0 },
   { name: 'boat-row-small', kind: 'boat', icon: '🚣', price: 0 },
   { name: 'boat-tug-a', kind: 'boat', icon: '🛥️', price: 10 },
@@ -116,6 +124,10 @@ interface Save {
   /** 0 sword, 1 axe, 2 great sword. */
   sword?: number;
   extraHearts?: number;
+  /** Pieces of armor bought: each soaks up one blow before a heart is lost. */
+  armor?: number;
+  /** How far each skill has been learned, 0 to 3. */
+  skills?: Record<string, number>;
   boots?: boolean;
   /** Species of the pet, or -1 for none. */
   pet?: number;
@@ -515,6 +527,23 @@ let extraHearts = save?.extraHearts ?? 0;
 let boots = save?.boots ?? false;
 let petSpecies = save?.pet ?? -1;
 let maxHearts = 5 + extraHearts;
+let armor = Math.min(MAX_ARMOR, save?.armor ?? 0);
+/** Armor that is whole right now. */
+let shield = armor;
+/** Things he gets better at: a point to spend for every few stars. */
+const SKILLS = [
+  { key: 'spin', icon: '🌀', say: 'Spin attack! Your sword hits all around you.' },
+  { key: 'speed', icon: '🏃', say: 'Fast feet! You run faster.' },
+  { key: 'jump', icon: '🦘', say: 'Big jump! You jump higher.' },
+  { key: 'magic', icon: '✨', say: 'Strong magic! Your wand hits harder.' },
+  { key: 'heal', icon: '💗', say: 'Quick heal! Your hearts come back faster.' },
+];
+const SKILL_MAX = 3;
+const STARS_PER_SKILL = 8;
+const skills: Record<string, number> = { spin: 0, speed: 0, jump: 0, magic: 0, heal: 0 };
+for (const s of SKILLS) skills[s.key] = Math.min(SKILL_MAX, Math.max(0, Math.floor(save?.skills?.[s.key] ?? 0)));
+/** True while he is on horseback: unlike in a car he can be seen, can fight and can be hit. */
+let onHorse = false;
 const quests = new Quests(save?.quests);
 const clearedForts = new Set<string>(save?.forts ?? []);
 const fortTimes: Record<string, number> = { ...(save?.fortTimes ?? {}) };
@@ -623,7 +652,7 @@ function showStars(pop: boolean): void {
   starsEl.classList.add('pop');
 }
 function showHearts(): void {
-  heartsEl.textContent = '❤️'.repeat(hearts) + '🤍'.repeat(maxHearts - hearts);
+  heartsEl.textContent = '❤️'.repeat(hearts) + '🤍'.repeat(maxHearts - hearts) + '🛡️'.repeat(shield);
 }
 const coinCountEl = $('coin-count');
 const questsEl = $('quests');
@@ -658,7 +687,7 @@ function selectTool(n: number): void {
   if (n < 0 || n >= FIRST_BLOCK + HOTBAR.length) return;
   tool = n;
   toolButtons.forEach((b, i) => b.classList.toggle('selected', i === n));
-  attackEl.hidden = driving || (tool !== SWORD && tool !== STAFF);
+  attackEl.hidden = (driving && !onHorse) || (tool !== SWORD && tool !== STAFF);
   onToolChange();
 }
 ['⛏️', '🗡️', '🪄'].concat(HOTBAR.map(() => '')).forEach((icon, i) => {
@@ -799,6 +828,8 @@ function saveNow(): void {
     coins,
     sword: swordLevel,
     extraHearts,
+    armor,
+    skills,
     boots,
     pet: petSpecies,
     quests: quests.save(),
@@ -1526,7 +1557,7 @@ async function createGame(assets: Assets): Promise<Game> {
   const vehicle = new THREE.Group();
   vehicle.rotation.order = 'YXZ';
   scene.add(vehicle);
-  let vehicleKind: 'car' | 'boat' | 'plane' = 'car';
+  let vehicleKind: GarageItem['kind'] = 'car';
   let propeller: THREE.Object3D | null = null;
   let wheels: THREE.Object3D[] = [];
   let vehicleToken = 0;
@@ -1539,6 +1570,14 @@ async function createGame(assets: Assets): Promise<Game> {
       // No aeroplane in the model packs, so this one is built from simple shapes.
       model = makePlane();
       propeller = model.getObjectByName('propeller') ?? null;
+    } else if (item.kind === 'horse') {
+      const gltf = await loadModel('village/horse_A.gltf');
+      if (token !== vehicleToken) return;
+      model = gltf.scene.clone(true);
+      model.scale.setScalar(HORSE_SCALE);
+      model.traverse((o) => {
+        o.castShadow = true;
+      });
     } else {
       const gltf = await loadModel(`${item.kind}/${item.name}.glb`);
       if (token !== vehicleToken) return;
@@ -1700,9 +1739,11 @@ async function createGame(assets: Assets): Promise<Game> {
     setCrawling(false);
     driving = true;
     carSpeed = 0;
-    avatar.visible = false;
-    attackEl.hidden = true;
+    onHorse = vehicleKind === 'horse';
+    avatar.visible = onHorse;
+    attackEl.hidden = !onHorse || (tool !== SWORD && tool !== STAFF);
     garageEl.hidden = true;
+    if (onHorse) sfx.jump();
   }
 
   function exitVehicle(): void {
@@ -1711,7 +1752,9 @@ async function createGame(assets: Assets): Promise<Game> {
       return;
     }
     driving = false;
+    onHorse = false;
     carSpeed = 0;
+    tilt.position.y = 1.1;
     // Step out on the left side.
     player.pos.set(carPos.x + Math.cos(carHeading) * 3.4, 0, carPos.z - Math.sin(carHeading) * 3.4);
     player.pos.y = Math.max(groundAt(player.pos.x, player.pos.z), SWIM_Y);
@@ -1748,7 +1791,8 @@ async function createGame(assets: Assets): Promise<Game> {
   const shopEl = $('shop');
   interface ShopItem {
     icon: string;
-    price: number;
+    /** Things sold more than once cost a little more each time. */
+    readonly price: number;
     owned(): boolean;
     buy(): void;
     /** For things that can be switched once owned. */
@@ -1780,7 +1824,8 @@ async function createGame(assets: Assets): Promise<Game> {
   const SHOP: ShopItem[] = [
     { icon: '🪓', price: 10, owned: () => swordLevel >= 1, buy: () => { swordLevel = 1; void loadSword(1); } },
     { icon: '⚔️', price: 30, owned: () => swordLevel >= 2, buy: () => { swordLevel = 2; void loadSword(2); } },
-    { icon: '❤️', price: 15, owned: () => extraHearts >= 3, buy: () => { extraHearts++; maxHearts++; hearts = maxHearts; showHearts(); } },
+    { icon: '❤️', get price() { return 15 + extraHearts * 5; }, owned: () => extraHearts >= MAX_EXTRA_HEARTS, buy: () => { extraHearts++; maxHearts++; hearts = maxHearts; showHearts(); speak(`Now you have ${maxHearts} hearts!`); } },
+    { icon: '🛡️', get price() { return 20 + armor * 15; }, owned: () => armor >= MAX_ARMOR, buy: () => { armor++; shield = armor; showHearts(); speak('Armor! A shield takes a hit for you.'); } },
     { icon: '👟', price: 20, owned: () => boots, buy: () => { boots = true; } },
     hatItem('🥳', 'party', 8),
     hatItem('🎩', 'top', 12),
@@ -1813,7 +1858,7 @@ async function createGame(assets: Assets): Promise<Game> {
       return b;
     });
     // Every market sells the gear; hats and furniture depend on the village, so they are worth travelling for.
-    const stock = SHOP.filter((item, i) => i < 4 || item.owned() || hashOf(`${villageShown?.id}${i}`) % 3 !== 0);
+    const stock = SHOP.filter((item, i) => i < 5 || item.owned() || hashOf(`${villageShown?.id}${i}`) % 3 !== 0);
     shopEl.replaceChildren(
       ...selling,
       ...stock.map((item) => {
@@ -1917,13 +1962,13 @@ async function createGame(assets: Assets): Promise<Game> {
     return plane;
   }
 
-  function findSpot(kind: 'car' | 'boat' | 'plane'): THREE.Vector3 | null {
+  function findSpot(kind: GarageItem['kind']): THREE.Vector3 | null {
     // The plane always waits at the west end of the airstrip, pointing down the runway.
     if (kind === 'plane') return new THREE.Vector3(AIRSTRIP.x - AIRSTRIP.halfLength + 8, AIRSTRIP.h, AIRSTRIP.z);
     const fits = (x: number, z: number): boolean =>
-      kind === 'car' ? groundAt(x, z) > SEA_LEVEL - 0.4 : groundAt(x, z) < SEA_LEVEL - 1.3;
+      kind !== 'boat' ? groundAt(x, z) > SEA_LEVEL - 0.4 : groundAt(x, z) < SEA_LEVEL - 1.3;
     const p = player.pos;
-    for (let r = kind === 'car' ? 5 : 0; r <= 96; r += 6) {
+    for (let r = kind !== 'boat' ? 5 : 0; r <= 96; r += 6) {
       for (let i = 0; i < 12; i++) {
         const a = facing + (i / 12) * Math.PI * 2;
         const x = p.x + Math.sin(a) * r;
@@ -1963,7 +2008,7 @@ async function createGame(assets: Assets): Promise<Game> {
           if (driving) exitVehicle();
           const spot = findSpot(item.kind);
           if (!spot) {
-            speak(item.kind === 'boat' ? 'Boats need water. Let us find the sea!' : 'Cars need dry land!');
+            speak(item.kind === 'boat' ? 'Boats need water. Let us find the sea!' : item.kind === 'horse' ? 'Horses need dry land!' : 'Cars need dry land!');
             return;
           }
           void setVehicle(item).then(() => {
@@ -1976,7 +2021,8 @@ async function createGame(assets: Assets): Promise<Game> {
               return;
             }
             enterVehicle();
-            sfx.honk();
+            if (item.kind === 'horse') speak('Giddy up!');
+            else sfx.honk();
             dirty = true;
           });
         });
@@ -1988,6 +2034,51 @@ async function createGame(assets: Assets): Promise<Game> {
     renderGarage();
     garageEl.hidden = !garageEl.hidden;
   });
+
+  // ---- skills: a point for every few stars, spent on getting better at something ----
+  const skillsEl = $('skills');
+  const skillChip = $('skill-chip');
+  let pointsShown = -1;
+  const skillsSpent = (): number => SKILLS.reduce((n, s) => n + skills[s.key], 0);
+  /** Points waiting to be spent. */
+  const skillPoints = (): number => Math.min(SKILLS.length * SKILL_MAX, Math.floor(starTotal() / STARS_PER_SKILL)) - skillsSpent();
+  function renderSkills(): void {
+    const free = skillPoints();
+    const head = document.createElement('div');
+    head.className = 'points';
+    // With nothing to spend, show how many more stars the next point needs.
+    head.textContent = free > 0 ? `💪 × ${free}` : skillsSpent() >= SKILLS.length * SKILL_MAX ? '💪 ✅' : `⭐ ${STARS_PER_SKILL - (starTotal() % STARS_PER_SKILL)} ➜ 💪`;
+    skillsEl.replaceChildren(
+      head,
+      ...SKILLS.map((skill) => {
+        const b = document.createElement('button');
+        const level = skills[skill.key];
+        b.className = level >= SKILL_MAX ? 'owned' : free <= 0 ? 'poor' : '';
+        const pips = document.createElement('span');
+        pips.textContent = '⭐'.repeat(level) + '⚪'.repeat(SKILL_MAX - level);
+        b.append(skill.icon, pips);
+        b.addEventListener('click', () => {
+          speak(skill.say);
+          if (skills[skill.key] >= SKILL_MAX || skillPoints() <= 0) {
+            sfx.remove();
+            return;
+          }
+          skills[skill.key]++;
+          sfx.win();
+          cheerUntil = now + 2;
+          dirty = true;
+          renderSkills();
+        });
+        return b;
+      }),
+    );
+  }
+  function toggleSkills(): void {
+    if (skillsEl.hidden) renderSkills();
+    skillsEl.hidden = !skillsEl.hidden;
+  }
+  $('skill-btn').addEventListener('click', toggleSkills);
+  skillChip.addEventListener('click', toggleSkills);
 
   // ---- fighting ----
   let attackReady = 0;
@@ -2028,14 +2119,26 @@ async function createGame(assets: Assets): Promise<Game> {
     if (now < invulnerableUntil || !targetable) return;
     invulnerableUntil = now + 1.2;
     lastHurt = now;
+    const away = Math.atan2(player.pos.x - from.x, player.pos.z - from.z);
+    if (shield > 0) {
+      // Armor takes the blow: no heart lost, and only a small shove.
+      shield--;
+      sfx.bonk();
+      knock.set(Math.sin(away) * 4, 0, Math.cos(away) * 4);
+      effects.dust(player.pos.x, player.pos.y + 1.2, player.pos.z, 0xcfd8e6, 0.9);
+      showHearts();
+      return;
+    }
     hearts--;
     sfx.ouch();
-    const away = Math.atan2(player.pos.x - from.x, player.pos.z - from.z);
     knock.set(Math.sin(away) * 10, 0, Math.cos(away) * 10);
+    if (onHorse) carSpeed *= 0.3;
     if (hero) busyUntil = now + hero.once('Hit_A', 1.5) * 0.7;
     if (hearts <= 0) {
       // Out of hearts: pop back to the last quiet spot, good as new.
+      if (driving) exitVehicle();
       hearts = maxHearts;
+      shield = armor;
       player.pos.copy(safeSpot);
       player.vel.set(0, 0, 0);
       knock.set(0, 0, 0);
@@ -2097,7 +2200,7 @@ async function createGame(assets: Assets): Promise<Game> {
   };
 
   function attack(): void {
-    if (!started || driving || swimming || inside || chat.isOpen || !hero || now < attackReady) return;
+    if (!started || (driving && !onHorse) || swimming || inside || chat.isOpen || !hero || now < attackReady) return;
     if (tool !== SWORD && tool !== STAFF) return;
     // Auto-aim: turn to the closest skeleton so small hands do not have to line it up.
     const target = enemies.nearest(player.pos, tool === SWORD ? 5.5 : 36);
@@ -2121,8 +2224,12 @@ async function createGame(assets: Assets): Promise<Game> {
       const fx = Math.sin(facing);
       const fz = Math.cos(facing);
       if (pendingHit.kind === 'sword') {
-        const point = new THREE.Vector3(player.pos.x + fx * 1.8, player.pos.y, player.pos.z + fz * 1.8);
-        if (enemies.damageAt(point, 2.7, 1 + swordLevel, enemyContext) > 0) sfx.bonk();
+        // With the spin skill, or from the saddle, the blade sweeps all the way round.
+        const sweep = skills.spin > 0 || onHorse;
+        const point = sweep ? player.pos.clone() : new THREE.Vector3(player.pos.x + fx * 1.8, player.pos.y, player.pos.z + fz * 1.8);
+        const reach = sweep ? 3.7 + skills.spin * 0.6 : 2.7;
+        if (sweep) effects.ripple(player.pos.x, player.pos.y + (onHorse ? 0.3 : 0.9), player.pos.z, reach * 0.55);
+        if (enemies.damageAt(point, reach, 1 + swordLevel + (skills.spin >= SKILL_MAX ? 1 : 0), enemyContext) > 0) sfx.bonk();
       } else {
         const mesh = new THREE.Mesh(boltGeometry, boltMaterial);
         mesh.position.set(player.pos.x + fx, player.pos.y + 1.6, player.pos.z + fz);
@@ -2140,7 +2247,7 @@ async function createGame(assets: Assets): Promise<Game> {
       b.mesh.position.addScaledVector(b.vel, dt);
       b.life -= dt;
       const p = b.mesh.position;
-      const hit = enemies.damageAt(new THREE.Vector3(p.x, p.y - 1, p.z), 1.7, 2, enemyContext) > 0;
+      const hit = enemies.damageAt(new THREE.Vector3(p.x, p.y - 1, p.z), 1.7 + skills.magic * 0.35, 2 + skills.magic, enemyContext) > 0;
       if (hit) sfx.bonk();
       if (hit || b.life <= 0 || p.y < groundAt(p.x, p.z)) {
         scene.remove(b.mesh);
@@ -2149,10 +2256,29 @@ async function createGame(assets: Assets): Promise<Game> {
     }
 
     // Hearts grow back after a quiet moment.
-    if (hearts < maxHearts && now - lastHurt > 6) {
+    const mend = 6 - skills.heal * 1.3;
+    if (hearts < maxHearts && now - lastHurt > mend) {
       hearts++;
-      lastHurt = now - 3;
+      lastHurt = now - mend / 2;
       showHearts();
+    } else if (hearts >= maxHearts && shield < armor && now - lastHurt > mend + 2) {
+      // Armor is mended once the hearts are full again.
+      shield++;
+      lastHurt = now - mend / 2;
+      showHearts();
+    }
+    // A new skill point for every few stars.
+    const free = skillPoints();
+    if (free !== pointsShown) {
+      if (free > pointsShown && pointsShown >= 0) {
+        sfx.win();
+        toast('💪 +1');
+        speak('You got stronger! Tap the arm to pick a skill.');
+      }
+      pointsShown = free;
+      skillChip.hidden = free <= 0;
+      skillChip.textContent = `💪 ${free}`;
+      if (!skillsEl.hidden) renderSkills();
     }
     // Remember the last calm, dry place to come back to.
     safeCheck -= dt;
@@ -2162,7 +2288,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
 
     // Nobody gets jumped while they are away from the controls.
-    targetable = !flying && !driving && !chat.isOpen && !inside && !riding && performance.now() - input.lastActivity < AWAY_MS;
+    targetable = !flying && (!driving || onHorse) && !chat.isOpen && !inside && !riding && performance.now() - input.lastActivity < AWAY_MS;
     const targets: Target[] = [{ id: selfId, pos: player.pos, targetable }, ...peers.targets()];
     // When friends play together, the player with the lowest id runs the skeletons for everyone;
     // the others show the same skeletons and report their hits.
@@ -2410,9 +2536,14 @@ async function createGame(assets: Assets): Promise<Game> {
       else if (did) sfx.place();
       return;
     }
-    if (!started || driving) return;
+    if (!started) return;
+    if (driving) {
+      if (onHorse && (tool === SWORD || tool === STAFF) && button !== 2) attack();
+      return;
+    }
     garageEl.hidden = true;
     shopEl.hidden = true;
+    skillsEl.hidden = true;
     if ((tool === SWORD || tool === STAFF) && button !== 2) {
       attack();
       return;
@@ -2496,12 +2627,12 @@ async function createGame(assets: Assets): Promise<Game> {
         pos.y += (SWIM_Y - pos.y) * Math.min(1, 6 * dt);
         moveBody(player, dt, blocks, false);
       } else {
-        let speed = crawling ? CRAWL_SPEED : input.run ? RUN_SPEED * (boots ? 1.35 : 1) : WALK_SPEED;
+        let speed = crawling ? CRAWL_SPEED : (input.run ? RUN_SPEED * (boots ? 1.35 : 1) : WALK_SPEED) * (1 + skills.speed * 0.08);
         if (ground < SEA_LEVEL - 0.4) speed *= 0.6;
         vel.x = mx * speed + knock.x;
         vel.z = mz * speed + knock.z;
         if (input.jump && player.onGround && !crawling) {
-          vel.y = JUMP_SPEED;
+          vel.y = JUMP_SPEED * (1 + skills.jump * 0.12);
           player.onGround = false;
           sfx.jump();
         }
@@ -2594,9 +2725,86 @@ async function createGame(assets: Assets): Promise<Game> {
     }
   }
 
+  let horseUp = 0;
+  let stride = 0;
+  /** A horse: turns on the spot, jumps, and carries him where he can be seen and can swing a sword. */
+  function updateHorse(dt: number, controlled: boolean): void {
+    if (controlled) {
+      if (Math.abs(input.moveZ) > 0.1) carSpeed += input.moveZ * HORSE_MAX * 1.6 * dt;
+      else carSpeed *= Math.max(0, 1 - 3 * dt);
+      carSpeed = Math.min(HORSE_MAX, Math.max(-4, carSpeed));
+      carHeading -= input.moveX * 2.3 * dt;
+    } else {
+      carSpeed = 0;
+    }
+    const fx = Math.sin(carHeading);
+    const fz = Math.cos(carHeading);
+    if (carSpeed !== 0) {
+      const nx = carPos.x + fx * carSpeed * dt;
+      const nz = carPos.z + fz * carSpeed * dt;
+      const g = groundAt(nx, nz);
+      // Horses wade but do not swim, and do not walk through blocks.
+      if (g < SEA_LEVEL - 0.9 || blocks.collides(nx, Math.max(g, carPos.y) + 0.7, nz, 1.2, 2)) {
+        carSpeed *= -0.2;
+      } else {
+        carPos.x = nx;
+        carPos.z = nz;
+        dirty = true;
+      }
+      if (terrain.collide(carPos, 1.2)) carSpeed *= 1 - Math.min(1, 3 * dt);
+    }
+    const g = groundAt(carPos.x, carPos.z);
+    const grounded = carPos.y <= g + 0.05 && horseUp <= 0;
+    if (grounded) {
+      carPos.y += (g - carPos.y) * Math.min(1, 14 * dt);
+      horseUp = 0;
+      if (controlled && input.jump && !wasJump) {
+        horseUp = 9.5;
+        sfx.jump();
+      }
+    }
+    if (!grounded || horseUp > 0) {
+      horseUp -= 24 * dt;
+      carPos.y = Math.max(g, carPos.y + horseUp * dt);
+      if (carPos.y <= g) horseUp = 0;
+    }
+    // No legs to move, so the whole horse rocks and bobs in time with its speed.
+    const pace = Math.min(1, Math.abs(carSpeed) / 6);
+    stride += Math.abs(carSpeed) * dt * 0.75;
+    const bob = grounded ? Math.abs(Math.sin(stride)) * 0.22 * pace : 0;
+    const front = groundAt(carPos.x + fx * 1.5, carPos.z + fz * 1.5);
+    const back = groundAt(carPos.x - fx * 1.5, carPos.z - fz * 1.5);
+    const wantPitch = (grounded ? -Math.atan2(front - back, 3) * 0.7 + Math.sin(stride * 2) * 0.07 * pace : -horseUp * 0.03);
+    carPitch += (wantPitch - carPitch) * Math.min(1, 10 * dt);
+    carRoll += ((controlled ? -input.moveX * pace * 0.08 : 0) - carRoll) * Math.min(1, 8 * dt);
+    vehicle.position.copy(carPos).setY(carPos.y + bob);
+    vehicle.rotation.set(carPitch, carHeading, carRoll);
+    if (controlled) {
+      // The rider sits in the saddle, turning to swing at whatever is close.
+      avatar.position.copy(carPos).setY(carPos.y + bob + SADDLE);
+      if (now >= busyUntil) facing = carHeading;
+      let turn = facing - avatar.rotation.y;
+      turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      avatar.rotation.y += turn * Math.min(1, 14 * dt);
+      tilt.rotation.x = 0;
+      tilt.position.y = 1.1;
+      animate(now < cheerUntil ? 'Cheering' : 'Idle_A');
+      hero?.update(dt);
+    }
+  }
+
   function updateVehicle(dt: number, controlled: boolean): void {
     if (vehicleKind === 'plane') {
       updatePlane(dt, controlled);
+      return;
+    }
+    if (vehicleKind === 'horse') {
+      updateHorse(dt, controlled);
+      if (controlled) {
+        let diff = carHeading + Math.PI - camYaw;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        camYaw += diff * Math.min(1, 3 * dt);
+      }
       return;
     }
     const boat = vehicleKind === 'boat';
@@ -3128,6 +3336,7 @@ async function createGame(assets: Assets): Promise<Game> {
       cell(['🗡️', '🪓', '⚔️'][swordLevel], '✓'),
       cell('🪄', '✓'),
       ...(boots ? [cell('👟', '✓')] : []),
+      ...(armor > 0 ? [cell('🛡️', `×${armor}`)] : []),
       // Hats can be put on and taken off straight from the bag.
       ...[...hatsOwned].map((key) =>
         cell(hatIcons[key] ?? '🎩', hat === key ? '✓' : '', () => {
@@ -3235,7 +3444,7 @@ async function createGame(assets: Assets): Promise<Game> {
           puffIn = boat ? 0.16 : 0.4;
           effects.ripple(who.x, water.position.y, who.z, boat ? 1.5 : 0.8);
           if (boat && speed > 8) effects.dust(who.x, water.position.y, who.z, 0xffffff, 1.2);
-        } else if (driving && vehicleKind === 'car' && speed > 9) {
+        } else if (driving && (vehicleKind === 'car' || onHorse) && speed > 9) {
           puffIn = 0.12;
           effects.dust(who.x, ground, who.z, ground < 1.7 ? 0xe6d7a3 : 0xbfae86, 1.3);
         } else if (!driving && !riding && !flying && player.onGround && speed > 6.5) {
@@ -3248,12 +3457,13 @@ async function createGame(assets: Assets): Promise<Game> {
     effects.update(dt);
 
     // Footsteps, in time with how fast he is walking.
-    if (started && !driving && !riding && !flying && !swimming && player.onGround && speed > 0.8) {
-      stepIn -= dt * Math.min(2.2, 0.55 + speed / 4.5);
+    if (started && (!driving || onHorse) && !riding && !flying && !swimming && (player.onGround || onHorse) && speed > 0.8) {
+      // On horseback these are hoofbeats: quicker, and always loud.
+      stepIn -= dt * (onHorse ? Math.min(3.2, 1 + speed / 4) : Math.min(2.2, 0.55 + speed / 4.5));
       if (stepIn <= 0) {
         stepIn = 0.36;
         stepsHeard++;
-        footstep(surfaceUnder(), crawling ? 0.4 : speed > 6 ? 1 : 0.7);
+        footstep(surfaceUnder(), onHorse ? 1 : crawling ? 0.4 : speed > 6 ? 1 : 0.7);
       }
     } else {
       stepIn = Math.min(stepIn, 0.1);
@@ -3513,7 +3723,7 @@ async function createGame(assets: Assets): Promise<Game> {
   function updateMap(dt: number, who: THREE.Vector3): void {
     const icons: MapIcon[] = [];
     for (const s of terrain.stars) icons.push({ x: s.pos.x, z: s.pos.z, icon: '⭐' });
-    if (!driving) icons.push({ x: carPos.x, z: carPos.z, icon: vehicleKind === 'boat' ? '⛵' : vehicleKind === 'plane' ? '✈️' : '🚗', pin: vehicleKind === 'plane' });
+    if (!driving) icons.push({ x: carPos.x, z: carPos.z, icon: vehicleKind === 'boat' ? '⛵' : vehicleKind === 'plane' ? '✈️' : vehicleKind === 'horse' ? '🐴' : '🚗', pin: vehicleKind === 'plane' });
     icons.push({ x: AIRSTRIP.x, z: AIRSTRIP.z, icon: '🛫' });
     // Only the closest village is pinned to the rim, so the arrow to follow is never in doubt.
     const places = villagesNear(who.x, who.z);
@@ -3554,6 +3764,7 @@ async function createGame(assets: Assets): Promise<Game> {
         enemies,
         enemyContext,
         terrain,
+        carHeadingNow: () => carHeading,
         setYaw: (yaw: number) => {
           camYaw = yaw;
         },
@@ -3612,6 +3823,12 @@ async function createGame(assets: Assets): Promise<Game> {
           pet: petSpecies,
           swordLevel,
           maxHearts,
+          armor,
+          shield,
+          skills: { ...skills },
+          skillPoints: skillPoints(),
+          onHorse,
+          carSpeed,
           inside: inside !== null,
           peers: peers.count,
           forts: clearedForts.size,
@@ -3647,6 +3864,12 @@ async function createGame(assets: Assets): Promise<Game> {
           coins += n;
           showCoins();
         },
+        giveStars: (n: number) => {
+          bonusStars += n;
+          showStars(false);
+        },
+        hurtMe: () => hurt({ x: player.pos.x + 1, z: player.pos.z }),
+        openShop,
       },
     });
   }
@@ -3760,7 +3983,9 @@ async function createGame(assets: Assets): Promise<Game> {
                             ? '⛵'
                             : vehicleKind === 'plane'
                               ? '✈️'
-                              : '🚗'
+                              : vehicleKind === 'horse'
+                                ? '🐴'
+                                : '🚗'
                           : peers.driverNear(player.pos, 6)
                             ? '🚙'
                             : canFish()
@@ -3772,7 +3997,7 @@ async function createGame(assets: Assets): Promise<Game> {
           actionEl.textContent = icon;
           // In the plane the two buttons are climb and descend.
           const flyingPlane = driving && vehicleKind === 'plane';
-          jumpEl.textContent = driving && !flyingPlane ? '📣' : '⬆️';
+          jumpEl.textContent = driving && !flyingPlane && !onHorse ? '📣' : '⬆️';
           flyEl.hidden = driving;
           crawlEl.hidden = driving && !flyingPlane;
           if (flyingPlane) crawlEl.textContent = '⬇️';

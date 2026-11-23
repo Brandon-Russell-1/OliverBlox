@@ -1154,3 +1154,69 @@ body:not(.touch) #action {
 #fly[hidden] {
   display: none;
 }
+
+/* Skills: one big button each, with stars for how far it has been learned. */
+#skills {
+  position: fixed;
+  z-index: 6;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  grid-template-columns: repeat(5, minmax(56px, 104px));
+  max-width: calc(100vw - 16px);
+  gap: 12px;
+  padding: 16px;
+  border-radius: 22px;
+  background: rgba(20, 30, 80, 0.8);
+}
+
+#skills[hidden] {
+  display: none;
+}
+
+#skills .points {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 800;
+  color: #fff;
+}
+
+#skills button {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  border-radius: 16px;
+  background: #fff;
+  font-size: 38px;
+}
+
+#skills button span {
+  font-size: 15px;
+}
+
+#skills button.poor {
+  opacity: 0.8;
+}
+
+#skills button.owned {
+  background: #c9f5d2;
+}
+
+/* Shown only while there is a skill point to spend. */
+#skill-chip {
+  right: calc(232px + env(safe-area-inset-right));
+  background: #ffe066;
+  font-weight: 800;
+  animation: skill-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes skill-pulse {
+  50% {
+    transform: scale(1.12);
+  }
+}
