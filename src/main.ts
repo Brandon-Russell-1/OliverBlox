@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
-import { Terrain, groundAt, nearestVillage, villagesNear, linkedPlace, AIRSTRIP, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
+import { Terrain, NATURE, groundAt, nearestVillage, villagesNear, linkedPlace, AIRSTRIP, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
 import { MiniMap, type MapIcon } from './map';
 import { Home, ROOM, type Spot } from './home';
 import { Coder } from './coder';
-import { Net, Peers } from './net';
+import { Net, Peers, type NetMessage } from './net';
 import { Blocks, HOTBAR, BLOCK_COLORS, EXTRA_BLOCKS, SLOPE, GLASS, DOOR } from './blocks';
 import { type Body, moveBody, bodyTouchesCell } from './physics';
 import { Input } from './input';
@@ -21,7 +21,8 @@ import { makeStar } from './models';
 import { makeHat } from './hats';
 import { Buddies, BUDDIES, BUDDY_GOALS } from './buddies';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
-import { sfx, speak, unlockAudio, setRain, thunder } from './audio';
+import { sfx, speak, unlockAudio, setRain, thunder, footstep, setAmbience, type Surface } from './audio';
+import { Effects } from './effects';
 import { makeRobot, makeClouds } from './models';
 
 const SAVE_KEY = 'oliverblox-save-v2';
@@ -183,6 +184,13 @@ const sky = new THREE.Mesh(
     uniforms: {
       top: { value: new THREE.Color(0x2674f0) },
       bottom: { value: new THREE.Color(HORIZON) },
+      sunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3) },
+      sunColor: { value: new THREE.Color(0xfff3d6) },
+      cloudColor: { value: new THREE.Color(0xffffff) },
+      time: { value: 0 },
+      night: { value: 0 },
+      cover: { value: 0.25 },
+      detail: { value: 1 },
     },
     vertexShader: `
       varying vec3 vDir;
@@ -193,10 +201,59 @@ const sky = new THREE.Mesh(
     fragmentShader: `
       uniform vec3 top;
       uniform vec3 bottom;
+      uniform vec3 sunDir;
+      uniform vec3 sunColor;
+      uniform vec3 cloudColor;
+      uniform float time;
+      uniform float night;
+      uniform float cover;
+      uniform float detail;
       varying vec3 vDir;
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+      float vnoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+      }
+      float fbm(vec2 p) {
+        float a = 0.5;
+        float s = 0.0;
+        for (int i = 0; i < 4; i++) {
+          s += a * vnoise(p);
+          p = p * 2.03 + 17.0;
+          a *= 0.5;
+        }
+        return s;
+      }
       void main() {
-        float h = clamp(normalize(vDir).y * 2.4, 0.0, 1.0);
-        gl_FragColor = vec4(mix(bottom, top, pow(h, 0.6)), 1.0);
+        vec3 d = normalize(vDir);
+        float h = clamp(d.y * 2.4, 0.0, 1.0);
+        vec3 col = mix(bottom, top, pow(h, 0.6));
+        float s = max(dot(d, sunDir), 0.0);
+        if (detail > 0.5 && night > 0.05 && d.y > 0.0) {
+          // Stars: one in a few cells of a grid laid over the sky, each twinkling at its own pace.
+          vec2 g = d.xz / (d.y + 0.4) * 70.0;
+          vec2 c = floor(g);
+          float r = hash(c);
+          vec2 at = fract(g) - 0.5 - (vec2(hash(c + 3.0), hash(c + 7.0)) - 0.5) * 0.5;
+          float point = 1.0 - smoothstep(0.0, 0.22, length(at));
+          col += vec3(point * step(0.95, r) * (0.7 + 0.3 * sin(time * 2.0 + r * 40.0)) * night * smoothstep(0.0, 0.25, d.y));
+        }
+        // The sun by day and the moon by night, with a glow around it.
+        float disc = smoothstep(0.9990, 0.9994, s);
+        float glow = pow(s, 90.0) * 0.5 + pow(s, 12.0) * 0.16;
+        col += sunColor * (disc * 1.3 + glow) * (1.0 - cover * 0.85);
+        if (detail > 0.5 && d.y > 0.02) {
+          vec2 uv = d.xz / (d.y + 0.12) * 1.3 + vec2(time * 0.012, time * 0.004);
+          float n = fbm(uv);
+          float dens = smoothstep(0.62 - cover * 0.36, 0.85 - cover * 0.32, n) * smoothstep(0.02, 0.2, d.y);
+          vec3 cc = mix(cloudColor * 0.78, cloudColor, smoothstep(0.5, 0.9, n)) + sunColor * pow(s, 6.0) * 0.22;
+          col = mix(col, cc, dens * 0.92);
+        }
+        gl_FragColor = vec4(col, 1.0);
         #include <colorspace_fragment>
       }`,
   }),
@@ -379,7 +436,62 @@ function updateDay(dt: number): void {
 
 const water = new THREE.Mesh(
   new THREE.PlaneGeometry(3000, 3000),
-  new THREE.MeshLambertMaterial({ color: 0x1f9bea, transparent: true, opacity: 0.8, depthWrite: false }),
+  new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      time: NATURE.time,
+      sunDir: skyUniforms.sunDir,
+      sunColor: skyUniforms.sunColor,
+      skyTop: skyUniforms.top,
+      skyBottom: skyUniforms.bottom,
+      deep: { value: new THREE.Color(0x1787d6) },
+      light: { value: 1 },
+      fogNear: { value: 115 },
+      fogFar: { value: 198 },
+    },
+    vertexShader: `
+      varying vec3 vWorld;
+      void main() {
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: `
+      uniform float time;
+      uniform vec3 sunDir;
+      uniform vec3 sunColor;
+      uniform vec3 skyTop;
+      uniform vec3 skyBottom;
+      uniform vec3 deep;
+      uniform float light;
+      uniform float fogNear;
+      uniform float fogFar;
+      varying vec3 vWorld;
+      vec2 wave(vec2 p, vec2 dir, float freq, float speed, float amp) {
+        return dir * cos(dot(p, dir) * freq + time * speed) * amp;
+      }
+      void main() {
+        vec3 toCam = cameraPosition - vWorld;
+        float dist = length(toCam);
+        vec3 v = toCam / dist;
+        vec2 p = vWorld.xz;
+        // Big slow swells, with smaller quicker ripples that fade out in the distance.
+        float near = 1.0 / (1.0 + dist * 0.04);
+        vec2 g = wave(p, vec2(0.8, 0.6), 0.5, 1.1, 0.07) + wave(p, vec2(-0.5, 0.86), 1.2, 1.6, 0.06);
+        g += (wave(p, vec2(0.2, -0.98), 2.9, 2.6, 0.06) + wave(p, vec2(-0.9, -0.4), 6.1, 3.4, 0.05)) * near;
+        vec3 n = normalize(vec3(-g.x, 1.0, -g.y));
+        float fres = pow(1.0 - max(dot(n, v), 0.0), 4.0);
+        vec3 r = reflect(-v, n);
+        r.y = abs(r.y);
+        vec3 mirrored = mix(skyBottom, skyTop, pow(clamp(r.y * 2.4, 0.0, 1.0), 0.6));
+        vec3 col = mix(deep * light, mirrored, 0.2 + 0.7 * fres);
+        col += sunColor * pow(max(dot(r, sunDir), 0.0), 150.0) * 1.4;
+        col = mix(col, skyBottom, smoothstep(fogNear, fogFar, dist));
+        gl_FragColor = vec4(col, mix(0.74, 0.96, fres));
+        #include <colorspace_fragment>
+      }`,
+  }),
 );
 water.rotation.x = -Math.PI / 2;
 water.position.y = SEA_LEVEL;
@@ -1104,6 +1216,11 @@ async function createGame(assets: Assets): Promise<Game> {
   const peers = new Peers(scene, assets.clips, assets.pets, new Set(GARAGE.filter((g) => g.kind !== 'plane').map((g) => g.name)));
   const greeted = new Set<string>();
   let netTimer = 0;
+  /** What we last told the others, and how long ago, so nothing is sent while nothing changes. */
+  let lastState = '';
+  let stateAge = 0;
+  let unsettled = false;
+  let stateSends = 0;
   net.onMessage = (from, msg) => {
     if (msg.t === 's') {
       peers.set(from, msg);
@@ -1980,7 +2097,8 @@ async function createGame(assets: Assets): Promise<Game> {
     enemies.update(dt, targets, enemyContext);
     netEnemyTimer -= dt;
     if (!enemies.remote && net.connected && netEnemyTimer <= 0) {
-      netEnemyTimer = 0.12;
+      // With no skeletons about there is only the clock to share, which can wait.
+      netEnemyTimer = enemies.count > 0 ? 0.2 : 2;
       // The host's clock is everyone's clock, so it is day or night for all at once.
       net.send({ t: 'en', c: Math.round(dayClock), w: Math.round(worldTime), ...enemies.snapshot() });
     }
@@ -2320,6 +2438,7 @@ async function createGame(assets: Assets): Promise<Game> {
 
   let carPitch = 0;
   let carRoll = 0;
+  let lastCarSpeed = 0;
 
   let planeClimb = 0;
   /**
@@ -2424,6 +2543,12 @@ async function createGame(assets: Assets): Promise<Game> {
       // The models' wheels sit a little below their origin.
       vehicle.position.copy(carPos).setY(carPos.y + 0.3 * VEHICLE_SCALE);
     }
+    if (!boat) {
+      const push = THREE.MathUtils.clamp((carSpeed - lastCarSpeed) / Math.max(dt, 0.001), -25, 25);
+      wantPitch -= push * 0.004;
+      if (controlled) wantRoll -= input.moveX * Math.min(1, Math.abs(carSpeed) / CAR_MAX) * 0.1;
+    }
+    lastCarSpeed = carSpeed;
     carPitch += (wantPitch - carPitch) * Math.min(1, 8 * dt);
     carRoll += (wantRoll - carRoll) * Math.min(1, 8 * dt);
     vehicle.rotation.set(carPitch, carHeading, carRoll);
@@ -2938,6 +3063,114 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     return best;
   };
+  // ---- a living world: the sky, the sea, the wind, and the marks he leaves as he goes ----
+  const effects = new Effects(scene);
+  const CLOUDS = { day: new THREE.Color(0xffffff), dusk: new THREE.Color(0xffb38a), night: new THREE.Color(0x27304f), storm: new THREE.Color(0x6f7882) };
+  const lastWho = new THREE.Vector3();
+  let stepIn = 0;
+  let puffIn = 0;
+  let shore = 0;
+  let shoreIn = 0;
+  let wasInWater = false;
+  let stepsHeard = 0;
+  /** What his feet are on, for the sound of his steps. */
+  function surfaceUnder(): Surface {
+    if (inside) return 'wood';
+    if (underground) return 'stone';
+    const ground = groundAt(player.pos.x, player.pos.z);
+    if (player.pos.y > ground + 0.6) return 'wood';
+    if (ground < SEA_LEVEL + 0.05) return 'water';
+    if (ground < 1.7) return 'sand';
+    return ground > 30 ? 'stone' : 'grass';
+  }
+  function updateNature(dt: number, who: THREE.Vector3): void {
+    const outdoors = inside === null && !underground;
+    const wet = outdoors ? rain : 0;
+    NATURE.time.value = now;
+    NATURE.wind.value = 1 + 1.6 * wet;
+    water.position.y = SEA_LEVEL + 0.06 * Math.sin(now * 0.8);
+
+    // The sky: the sun or moon sits where the light really comes from, and clouds thicken before rain.
+    const u = skyUniforms;
+    const low = Math.max(0, 1 - Math.abs(SUN_OFFSET.y - 45) / 30);
+    u.sunDir.value.copy(SUN_OFFSET).normalize();
+    u.sunColor.value.copy(sun.color).lerp(SKY.dusk, low * 0.6 * (1 - night)).multiplyScalar(underground ? 0 : 1 - 0.45 * night);
+    u.cloudColor.value.copy(CLOUDS.day).lerp(CLOUDS.dusk, low * 0.7).lerp(CLOUDS.night, night).lerp(CLOUDS.storm, wet * 0.8 * (1 - 0.6 * night));
+    u.time.value = now;
+    u.night.value = night;
+    u.cover.value = 0.25 + 0.75 * wet;
+    u.detail.value = quality < 2 && !underground ? 1 : 0;
+    clouds.visible = quality >= 2;
+    // Warm light when the sun is low.
+    if (!underground) sun.color.lerp(SKY.dusk, low * 0.35 * (1 - night));
+    const sea = water.material.uniforms;
+    const fog = scene.fog as THREE.Fog;
+    sea.light.value = 1 - 0.6 * night - 0.25 * wet;
+    sea.fogNear.value = fog.near;
+    sea.fogFar.value = fog.far;
+
+    // How fast he is going, on foot or on wheels.
+    const speed = dt > 0 ? Math.min(60, Math.hypot(who.x - lastWho.x, who.z - lastWho.z) / dt) : 0;
+    lastWho.copy(who);
+    const ground = groundAt(who.x, who.z);
+    const inWater = outdoors && ground < SEA_LEVEL - 0.15 && who.y < SEA_LEVEL + 0.6;
+    if (started && outdoors) {
+      // Jumping or driving into the sea makes a splash.
+      if (inWater && !wasInWater && !driving) {
+        sfx.splash();
+        for (let i = 0; i < 3; i++) effects.ripple(who.x, water.position.y, who.z, 0.7 + i * 0.5);
+      }
+      puffIn -= dt;
+      if (puffIn <= 0 && speed > 1.5) {
+        const boat = driving && vehicleKind === 'boat';
+        if (inWater || boat) {
+          puffIn = boat ? 0.16 : 0.4;
+          effects.ripple(who.x, water.position.y, who.z, boat ? 1.5 : 0.8);
+          if (boat && speed > 8) effects.dust(who.x, water.position.y, who.z, 0xffffff, 1.2);
+        } else if (driving && vehicleKind === 'car' && speed > 9) {
+          puffIn = 0.12;
+          effects.dust(who.x, ground, who.z, ground < 1.7 ? 0xe6d7a3 : 0xbfae86, 1.3);
+        } else if (!driving && !riding && !flying && player.onGround && speed > 6.5) {
+          puffIn = 0.22;
+          effects.dust(who.x, who.y, who.z, ground < 1.7 ? 0xe6d7a3 : 0xcbb98f, 0.7);
+        }
+      }
+    }
+    wasInWater = inWater;
+    effects.update(dt);
+
+    // Footsteps, in time with how fast he is walking.
+    if (started && !driving && !riding && !flying && !swimming && player.onGround && speed > 0.8) {
+      stepIn -= dt * Math.min(2.2, 0.55 + speed / 4.5);
+      if (stepIn <= 0) {
+        stepIn = 0.36;
+        stepsHeard++;
+        footstep(surfaceUnder(), crawling ? 0.4 : speed > 6 ? 1 : 0.7);
+      }
+    } else {
+      stepIn = Math.min(stepIn, 0.1);
+    }
+
+    // The sea is heard before it is seen: listen for water in a widening circle around him.
+    shoreIn -= dt;
+    if (shoreIn <= 0) {
+      shoreIn = 0.5;
+      let nearest = inWater ? 0 : 50;
+      for (const r of [8, 18, 30, 44]) {
+        if (r >= nearest) break;
+        for (let i = 0; i < 8; i++) {
+          if (groundAt(who.x + Math.sin(i * 0.785) * r, who.z + Math.cos(i * 0.785) * r) < SEA_LEVEL - 0.3) {
+            nearest = r;
+            break;
+          }
+        }
+      }
+      shore = Math.max(0, 1 - nearest / 50);
+    }
+    const high = THREE.MathUtils.clamp((who.y - 12) / 45, 0, 1);
+    setAmbience({ wind: Math.min(1, 0.15 + 0.5 * high + 0.5 * wet + (driving ? Math.min(0.4, speed / 70) : 0)), shore, night, rain: wet, outdoors: outdoors && started }, dt);
+  }
+
   // ---- AI friends: computer-run companions who share the world ----
   const buddies = new Buddies(
     scene,
@@ -3212,6 +3445,9 @@ async function createGame(assets: Assets): Promise<Game> {
         setYaw: (yaw: number) => {
           camYaw = yaw;
         },
+        setPitch: (pitch: number) => {
+          camPitch = pitch;
+        },
         setFacing: (f: number) => {
           facing = f;
         },
@@ -3230,6 +3466,7 @@ async function createGame(assets: Assets): Promise<Game> {
           input.lastActivity = -1e9;
         },
         peersVisible: () => peers.visibleDebug(),
+        peersDrawn: () => peers.drawnDebug(),
         peersBadges: () => peers.badgesDebug(),
         perf: () => ({ ...renderer.info.render }),
         frameMs: () => frameMs,
@@ -3268,6 +3505,9 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          stateSends,
+          stepsHeard,
+          shore: +shore.toFixed(2),
           buddyGoals: BUDDIES.map((b) => `${b.id}:${buddies.goalOf(b.id)}`).join(' '),
           quality,
           visiting,
@@ -3335,14 +3575,16 @@ async function createGame(assets: Assets): Promise<Game> {
           speak('Time for a break! See you later.');
         }
         coder.update(dt);
-        // Tell the other players where we are, ten times a second.
+        // Tell the other players where we are: five times a second while something is changing,
+        // and a reminder every two seconds while nothing is, which also brings newcomers up to date.
         netTimer -= dt;
         if (net.connected && netTimer <= 0) {
-          netTimer = 0.1;
+          netTimer = 0.2;
+          stateAge += 0.2;
           // Show who is here: our own face, then our friends'.
           const here = `✅ ${faceFor(selfId)} ${getPlayerName()} ${peers.faces()}`.replace(/ +/g, ' ');
           if (roomStatus.textContent !== here) roomStatus.textContent = here;
-          net.send({
+          const state: NetMessage = {
             t: 's',
             x: +who.x.toFixed(2),
             y: +who.y.toFixed(2),
@@ -3359,7 +3601,17 @@ async function createGame(assets: Assets): Promise<Game> {
             w: tool === SWORD ? swordLevel : tool === STAFF ? 3 : -1,
             i: inside ? (visiting ?? selfId) : '',
             q: performance.now() - input.lastActivity > AWAY_MS ? 1 : 0,
-          });
+          };
+          const packed = JSON.stringify(state);
+          // After a change, say it once more: the repeat tells the others we have come to rest.
+          const changed = packed !== lastState;
+          if (changed || unsettled || stateAge >= 2) {
+            unsettled = changed;
+            lastState = packed;
+            stateAge = 0;
+            stateSends++;
+            net.send(state);
+          }
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
         nearBuddy = driving ? null : buddies.nearest(player.pos, 4);
@@ -3458,6 +3710,7 @@ async function createGame(assets: Assets): Promise<Game> {
       updateDay(dt);
       updateWeather(dt, inside !== null || underground);
       sun.position.copy(who).add(SUN_OFFSET);
+      updateNature(dt, who);
       for (const c of clouds.children) {
         c.position.x += dt * 1.5;
         if (c.position.x - who.x > 320) c.position.x -= 640;

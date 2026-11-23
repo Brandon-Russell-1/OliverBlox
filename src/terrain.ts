@@ -405,6 +405,9 @@ const beamMaterial = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide,
 });
 
+/** Shared by everything that moves with the weather: the clock, and how hard the wind blows (1 is a breeze). */
+export const NATURE = { time: { value: 0 }, wind: { value: 1 } };
+
 export class Terrain {
   private chunks = new Map<string, Chunk>();
   private readonly groundMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -412,13 +415,44 @@ export class Terrain {
   view = VIEW;
   readonly stars: Star[] = [];
   readonly chests: Star[] = [];
+  /** The scenery that sways in the wind. */
+  private plants = new Set<PropDef>();
 
   constructor(
     private readonly scene: THREE.Scene,
     private readonly props: PropLibrary,
     /** Ids of stars already picked up, so they do not come back. */
     private readonly collected: Set<string>,
-  ) {}
+  ) {
+    for (const def of [...props.trees, ...props.bushes, ...props.grass]) this.plants.add(def);
+    // Trees, bushes and grass lean in the wind: the higher up the plant, the further it moves.
+    props.material.onBeforeCompile = (shader) => {
+      shader.uniforms.natureTime = NATURE.time;
+      shader.uniforms.natureWind = NATURE.wind;
+      shader.vertexShader = `attribute float sway;\nuniform float natureTime;\nuniform float natureWind;\n${shader.vertexShader}`.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        float gust = sin(natureTime * 1.7 + position.x * 0.31 + position.z * 0.23) + 0.5 * sin(natureTime * 2.9 + position.x * 0.83 - position.z * 0.4);
+        transformed.x += sway * gust * natureWind;
+        transformed.z += sway * gust * 0.6 * natureWind;`,
+      );
+    };
+    // Where the land meets the sea: wet sand, and a line of foam that laps in and out with the waves.
+    this.groundMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.natureTime = NATURE.time;
+      shader.vertexShader = `varying float vSeaY;\n${shader.vertexShader}`.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n        vSeaY = (modelMatrix * vec4(transformed, 1.0)).y;',
+      );
+      shader.fragmentShader = `varying float vSeaY;\nuniform float natureTime;\n${shader.fragmentShader}`.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        float seaD = vSeaY - ${SEA_LEVEL.toFixed(1)} - 0.06 * sin(natureTime * 0.8);
+        diffuseColor.rgb *= 1.0 - 0.2 * (1.0 - smoothstep(0.0, 0.6, seaD)) * step(-0.4, seaD);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), 0.8 * (1.0 - smoothstep(0.0, 0.1, abs(seaD - 0.04))));`,
+      );
+    };
+  }
 
   /** Load chunks near (x, z), nearest first, and drop far ones. Returns true while work remains. */
   update(x: number, z: number, budget: number): boolean {
@@ -672,10 +706,13 @@ export class Terrain {
     const pos = new Float32Array(total * 3);
     const norm = new Float32Array(total * 3);
     const uv = new Float32Array(total * 2);
+    const sway = new Float32Array(total);
     let at = 0;
     for (const { def, x, y, z, scale, rot } of placements) {
       const cos = Math.cos(rot);
       const sin = Math.sin(rot);
+      // Rocks and buildings stand firm; plants bend more the taller they are.
+      const bend = this.plants.has(def) ? Math.min(0.32, 0.06 + 0.03 * def.height * scale) : 0;
       for (let i = 0; i < def.count; i++) {
         const px = def.pos[i * 3];
         const py = def.pos[i * 3 + 1];
@@ -685,6 +722,7 @@ export class Terrain {
         const o = (at + i) * 3;
         pos[o] = x + (px * cos + pz * sin) * scale;
         pos[o + 1] = y + py * scale;
+        if (bend > 0) sway[at + i] = bend * Math.pow(Math.max(0, py / def.height), 2);
         pos[o + 2] = z + (pz * cos - px * sin) * scale;
         norm[o] = nx * cos + nz * sin;
         norm[o + 1] = def.norm[i * 3 + 1];
@@ -697,6 +735,7 @@ export class Terrain {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('sway', new THREE.BufferAttribute(sway, 1));
     const mesh = new THREE.Mesh(geo, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;

@@ -129,6 +129,10 @@ interface Peer {
   badge: string;
   /** While an emoji they sent is showing instead of their face. */
   emoteTime: number;
+  /** How fast they were last seen moving, to carry them along between updates. */
+  vel: THREE.Vector3;
+  /** Seconds since they last told us where they are. */
+  since: number;
 }
 
 const PEER_ANIMS = ['Idle_A', 'Walking_A', 'Running_A', 'Jump_Idle', 'Crawling', 'Crouching', 'Cheering', 'Melee_1H_Attack_Slice_Horizontal', 'Throw', 'Hit_A'];
@@ -203,6 +207,11 @@ export class Peers {
     return p && p.vehicleName ? p.group.position : null;
   }
 
+  /** For tests: where each friend is drawn right now. */
+  drawnDebug(): number[][] {
+    return [...this.map.values()].map((p) => [p.group.position.x, p.group.position.z]);
+  }
+
   /** For tests: whether each friend is being drawn, and what is over their head. */
   visibleDebug(): boolean[] {
     return [...this.map.values()].map((p) => p.group.visible);
@@ -232,9 +241,15 @@ export class Peers {
       const label = makeLabel();
       group.add(marker, label);
       this.scene.add(group);
-      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, gear: '', badge: face, emoteTime: 0 };
+      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, gear: '', badge: face, emoteTime: 0, vel: new THREE.Vector3(), since: 9 };
       this.map.set(id, peer);
     }
+    // Work out their speed from the last two reports, so they keep moving smoothly until the next one.
+    const old = peer.state;
+    const moved = Math.hypot(state.x - old.x, state.y - old.y, state.z - old.z);
+    if (peer.since < 0.6 && moved < 25) peer.vel.set(state.x - old.x, state.y - old.y, state.z - old.z).divideScalar(Math.max(0.1, peer.since));
+    else peer.vel.set(0, 0, 0);
+    peer.since = 0;
     peer.state = state;
     peer.pos.set(state.x, state.y, state.z);
     // In a car or boat: show that instead of the hero.
@@ -306,9 +321,11 @@ export class Peers {
     for (const peer of this.map.values()) {
       const { state, group } = peer;
       const p = group.position;
+      peer.since += dt;
+      if (peer.since < 0.25) peer.pos.addScaledVector(peer.vel, dt);
       // Teleports (vehicles from the garage, going indoors) snap; ordinary movement glides.
       if (p.distanceTo(peer.pos) > 25) p.copy(peer.pos);
-      else p.lerp(peer.pos, Math.min(1, 10 * dt));
+      else p.lerp(peer.pos, Math.min(1, 12 * dt));
       let diff = state.f - group.rotation.y;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       group.rotation.y += diff * Math.min(1, 10 * dt);

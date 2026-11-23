@@ -186,3 +186,136 @@ export function thunder(): void {
   source.connect(filter).connect(gain).connect(ctx.destination);
   source.start();
 }
+
+/** What is under his feet, which decides how a footstep sounds. */
+export type Surface = 'grass' | 'sand' | 'stone' | 'wood' | 'water';
+
+const STEPS: Record<Surface, { type: BiquadFilterType; freq: number; q: number; length: number; gain: number }> = {
+  grass: { type: 'bandpass', freq: 1100, q: 0.8, length: 0.08, gain: 0.16 },
+  sand: { type: 'highpass', freq: 2600, q: 0.5, length: 0.11, gain: 0.07 },
+  stone: { type: 'bandpass', freq: 420, q: 2.2, length: 0.05, gain: 0.3 },
+  wood: { type: 'bandpass', freq: 260, q: 3, length: 0.07, gain: 0.34 },
+  water: { type: 'bandpass', freq: 700, q: 0.9, length: 0.2, gain: 0.14 },
+};
+let shortNoise: AudioBuffer | null = null;
+
+/** One footstep: a puff of noise shaped to suit the ground, never quite the same twice. */
+export function footstep(surface: Surface, loud = 1): void {
+  if (!ctx) return;
+  shortNoise ??= noise(0.4);
+  if (!shortNoise) return;
+  const step = STEPS[surface];
+  const source = ctx.createBufferSource();
+  source.buffer = shortNoise;
+  source.playbackRate.value = 0.8 + Math.random() * 0.4;
+  const filter = ctx.createBiquadFilter();
+  filter.type = step.type;
+  filter.frequency.value = step.freq * (0.9 + Math.random() * 0.2);
+  filter.Q.value = step.q;
+  const gain = ctx.createGain();
+  const t0 = ctx.currentTime;
+  gain.gain.setValueAtTime(step.gain * loud, t0);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0 + step.length);
+  source.connect(filter).connect(gain).connect(ctx.destination);
+  source.start(t0, Math.random() * 0.2, step.length + 0.03);
+}
+
+interface Bed {
+  gain: GainNode;
+  filter: BiquadFilterNode;
+}
+
+function bed(type: BiquadFilterType, freq: number): Bed | null {
+  if (!ctx) return null;
+  const source = ctx.createBufferSource();
+  source.buffer = noise(3);
+  source.loop = true;
+  const filter = ctx.createBiquadFilter();
+  filter.type = type;
+  filter.frequency.value = freq;
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  source.connect(filter).connect(gain).connect(ctx.destination);
+  source.start();
+  return { gain, filter };
+}
+
+/** A short whistle that slides in pitch, somewhere to the left or right. */
+function whistle(from: number, to: number, at: number, length: number, volume: number, pan: number): void {
+  if (!ctx) return;
+  const t0 = ctx.currentTime + at;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.setValueAtTime(from, t0);
+  osc.frequency.exponentialRampToValueAtTime(to, t0 + length);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(volume, t0 + length * 0.3);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + length);
+  let out: AudioNode = osc.connect(gain);
+  if (typeof ctx.createStereoPanner === 'function') {
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = pan;
+    out = out.connect(panner);
+  }
+  out.connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + length + 0.02);
+}
+
+let windBed: Bed | null = null;
+let seaBed: Bed | null = null;
+let birdIn = 3;
+let cricketIn = 1;
+
+/** What the place around him sounds like right now. Every value runs from 0 to 1. */
+export interface Ambience {
+  /** How windy: higher up a mountain, in a plane, or in a storm. */
+  wind: number;
+  /** How close the sea is. */
+  shore: number;
+  night: number;
+  rain: number;
+  /** False indoors and underground, where it is quiet. */
+  outdoors: boolean;
+}
+
+/** Wind, waves, birdsong by day and crickets by night. Call every frame. */
+export function setAmbience(a: Ambience, dt: number): void {
+  if (!ctx) return;
+  windBed ??= bed('lowpass', 420);
+  seaBed ??= bed('lowpass', 900);
+  const t = ctx.currentTime;
+  if (windBed) {
+    const gust = 0.7 + 0.3 * Math.sin(t * 0.37) * Math.sin(t * 0.11 + 2);
+    windBed.gain.gain.setTargetAtTime(a.outdoors ? (0.012 + 0.06 * a.wind) * gust : 0, t, 0.4);
+    windBed.filter.frequency.setTargetAtTime(330 + 500 * a.wind + 120 * Math.sin(t * 0.23), t, 0.4);
+  }
+  if (seaBed) {
+    // Each wave swells up the beach and draws back.
+    const swell = 0.5 + 0.5 * Math.sin(t * 0.8);
+    seaBed.gain.gain.setTargetAtTime(a.outdoors ? a.shore * (0.02 + 0.06 * swell) : 0, t, 0.3);
+    seaBed.filter.frequency.setTargetAtTime(600 + 700 * swell, t, 0.3);
+  }
+  if (!a.outdoors) return;
+  birdIn -= dt;
+  if (birdIn <= 0) {
+    birdIn = 2.5 + Math.random() * 6;
+    if (a.night < 0.35 && a.rain < 0.2) {
+      const pan = Math.random() * 1.6 - 0.8;
+      const base = 2300 + Math.random() * 1500;
+      const notes = 2 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < notes; i++) {
+        const up = Math.random() > 0.4;
+        whistle(base * (up ? 1 : 1.25), base * (up ? 1.3 : 0.95), i * 0.13, 0.09, 0.02, pan);
+      }
+    }
+  }
+  cricketIn -= dt;
+  if (cricketIn <= 0) {
+    cricketIn = 0.7 + Math.random() * 0.9;
+    if (a.night > 0.6 && a.rain < 0.3) {
+      const pan = Math.random() * 1.6 - 0.8;
+      for (let i = 0; i < 3; i++) whistle(4300, 4350, i * 0.055, 0.035, 0.008, pan);
+    }
+  }
+}
