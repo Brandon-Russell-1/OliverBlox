@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { fbm, hash2, smoothstep, mulberry32 } from './noise';
-import { BUILDINGS, FORT_FIRST, type PropDef, type PropLibrary } from './assets';
+import { BUILDINGS, type PropDef, type PropLibrary } from './assets';
 import { makeStar } from './models';
 
 /** Chunk edge in metres, and how many terrain cells run along it. */
@@ -35,19 +35,347 @@ export interface Building {
   z: number;
   rot: number;
   scale: number;
+  /** True for a building with a door to walk in by. */
+  enter?: boolean;
+  /** How far out its circle of solid ground reaches; 0 for something small enough to walk through. */
+  solid?: number;
+  /** A stretch of wall: solid all along its length rather than in a circle. */
+  wall?: number;
 }
+
+/** The kinds of small place found between the villages. */
+export type SiteType = 'camp' | 'farm' | 'ruin' | 'tower' | 'lumber' | 'mine' | 'shrine' | 'merchant' | 'fishing';
 
 export interface Village {
   /** Stable name for this place, used to remember which forts have been won. */
   id: string;
   /** A friendly village, or a fort held by skeletons. */
-  kind: 'village' | 'fort' | 'maze' | 'cave' | 'dungeon';
+  kind: 'village' | 'fort' | 'maze' | 'cave' | 'dungeon' | 'site';
+  /** For the small places between villages: what is there. */
+  site?: SiteType;
+  /** Camp fires. */
+  fires?: { x: number; z: number }[];
   x: number;
   z: number;
   h: number;
   buildings: Building[];
   /** For mazes: where each stretch of wall stands. */
   walls: { x: number; z: number; rot: number }[];
+}
+
+const B = (name: string): number => {
+  const i = BUILDINGS.indexOf(name);
+  if (i < 0) throw new Error(`No building called ${name}`);
+  return i;
+};
+/** How big each small thing is drawn. Buildings are drawn at BUILDING_SCALE unless a layout says otherwise. */
+const PROP_SCALE: Record<string, number> = {
+  cart: 3.6,
+  cart_merchant: 3.6,
+  horse_A: 3.4,
+  catapult_red_full: 4.2,
+  cannon_red_full: 4,
+  banner_red_full: 8,
+  banner_blue_full: 8,
+  tent: 9,
+  fence_wood_straight: 4,
+  fence_wood_straight_gate: 4,
+  wall_straight: 5,
+  wall_straight_gate: 5,
+  haybale: 6,
+  trees_A_cut: 6,
+  boat: 8,
+  boatrack: 7,
+  target: 6,
+  weaponrack: 6,
+  flag_red: 12,
+  flag_blue: 12,
+  building_grain: 6,
+};
+/** Buildings with no way in: they are open to the sky, or too small. */
+const NO_DOOR = new Set(['building_well_blue', 'building_destroyed', 'building_grain', 'building_scaffolding', 'building_stage_A']);
+
+/** Helps set out a place: positions are given relative to its middle and turned to face its own way. */
+class Layout {
+  readonly buildings: Building[] = [];
+  readonly fires: { x: number; z: number }[] = [];
+  private n = 0;
+  constructor(
+    readonly x: number,
+    readonly z: number,
+    private readonly turn: number,
+    private readonly seed: number,
+  ) {}
+
+  /** A number from 0 to 1 that is always the same for this place and this call. */
+  roll(): number {
+    return hash2(this.seed, this.n++, 201);
+  }
+
+  pick<T>(list: T[]): T {
+    return list[Math.floor(this.roll() * list.length) % list.length];
+  }
+
+  at(dx: number, dz: number): { x: number; z: number } {
+    const c = Math.cos(this.turn);
+    const s = Math.sin(this.turn);
+    return { x: this.x + dx * c + dz * s, z: this.z + dz * c - dx * s };
+  }
+
+  /** A building, facing the given way (0 faces +z before the place's own turn). */
+  put(name: string, dx: number, dz: number, facing: number, scale = PROP_SCALE[name] ?? BUILDING_SCALE): Building {
+    const { x, z } = this.at(dx, dz);
+    const big = name.startsWith('building_');
+    const b: Building = { def: B(name), x, z, rot: facing + this.turn, scale, enter: big && !NO_DOOR.has(name) };
+    if (!big) b.solid = 0;
+    if (name === 'building_grain') b.solid = 0;
+    this.buildings.push(b);
+    return b;
+  }
+
+  /** Something small, turned any which way, that can be walked through. */
+  prop(name: string, dx: number, dz: number, facing = this.roll() * Math.PI * 2): Building {
+    return this.put(name, dx, dz, facing);
+  }
+
+  /** A few small things scattered around a spot. */
+  clutter(names: string[], dx: number, dz: number, count: number, spread: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = this.roll() * Math.PI * 2;
+      const r = spread * (0.35 + 0.65 * this.roll());
+      this.prop(this.pick(names), dx + Math.sin(a) * r, dz + Math.cos(a) * r);
+    }
+  }
+
+  fire(dx: number, dz: number): void {
+    this.fires.push(this.at(dx, dz));
+    this.prop('resource_lumber', dx, dz).scale = 4;
+  }
+
+  /** A ring of wall with a gate on the +z side. */
+  ring(radius: number, wall: string, gate: string): void {
+    const scale = PROP_SCALE[wall];
+    const count = Math.round((Math.PI * 2 * radius) / (2 * scale));
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2;
+      const b = this.put(i === 0 ? gate : wall, Math.sin(a) * radius, Math.cos(a) * radius, a, scale);
+      // The gate is only solid at its two posts.
+      b.wall = i === 0 ? 2 : 1;
+    }
+  }
+}
+
+const VILLAGE_INNER = ['home_B', 'tavern', 'market', 'blacksmith', 'windmill', 'church', 'townhall', 'tower_A', 'stables'].map((n) => `building_${n}_blue`);
+const VILLAGE_OUTER = ['archeryrange', 'barracks', 'lumbermill', 'workshop', 'watermill', 'shrine', 'watchtower', 'tower_B'].map((n) => `building_${n}_blue`);
+const YARD = ['barrel', 'crate_A_big', 'crate_B_small', 'sack', 'haybale', 'bucket_water', 'crate_long_A'];
+
+function layVillage(lay: Layout, rx: number, rz: number): void {
+  lay.put('building_well_blue', 0, 0, 0, BUILDING_SCALE * 0.6);
+  const n = 6 + Math.floor(hash2(rx, rz, 74) * 3);
+  const start = Math.floor(lay.roll() * VILLAGE_INNER.length);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + hash2(rx + i * 31, rz, 75) * 0.3;
+    const r = 26 + hash2(rx + i * 31, rz, 76) * 7;
+    // The first house in a village is the player's own and the next three are for friends.
+    // All four are the same cottage, so their doors are always in the same place.
+    const name = i < 4 ? 'building_home_A_blue' : VILLAGE_INNER[(start + i) % VILLAGE_INNER.length];
+    // Every building faces the middle.
+    lay.put(name, Math.sin(a) * r, Math.cos(a) * r, a + Math.PI);
+  }
+  // Something in the yard beside each one. (After the houses, so a house's place in the list never changes.)
+  for (let i = 0; i < n; i++) {
+    const b = lay.buildings[1 + i];
+    const a = Math.atan2(b.x - lay.x, b.z - lay.z) + 0.25;
+    const r = Math.hypot(b.x - lay.x, b.z - lay.z) + 2;
+    lay.clutter(YARD, Math.sin(a) * r, Math.cos(a) * r, 2, 2.2);
+  }
+  // A second ring of bigger buildings behind the houses, with fields and carts between them.
+  const m = 4 + Math.floor(lay.roll() * 3);
+  const first = Math.floor(lay.roll() * VILLAGE_OUTER.length);
+  const offset = lay.roll() * Math.PI * 2;
+  for (let i = 0; i < m; i++) {
+    const a = offset + (i / m) * Math.PI * 2;
+    lay.put(VILLAGE_OUTER[(first + i) % VILLAGE_OUTER.length], Math.sin(a) * 45, Math.cos(a) * 45, a + Math.PI);
+    const between = a + Math.PI / m;
+    const what = i % 3;
+    if (what === 0) {
+      lay.put('building_grain', Math.sin(between) * 46, Math.cos(between) * 46, between);
+      lay.clutter(['haybale', 'wheelbarrow', 'sack'], Math.sin(between) * 39, Math.cos(between) * 39, 3, 3);
+    } else if (what === 1) {
+      lay.prop('cart', Math.sin(between) * 42, Math.cos(between) * 42).solid = 2.2;
+      lay.prop('horse_A', Math.sin(between) * 42 + 4, Math.cos(between) * 42 + 2);
+      lay.prop('trough', Math.sin(between) * 44, Math.cos(between) * 44 - 4);
+    } else {
+      lay.put('building_stage_A', Math.sin(between) * 44, Math.cos(between) * 44, between + Math.PI, 7);
+      lay.prop('target', Math.sin(between) * 40 + 3, Math.cos(between) * 40);
+    }
+  }
+  for (let i = 0; i < 4; i++) lay.prop('flag_blue', Math.sin(i * 1.571 + 0.78) * 9, Math.cos(i * 1.571 + 0.78) * 9, i * 1.571);
+}
+
+/** A skeleton stronghold: a castle inside a ring of wall, with towers, tents, fires and war machines. */
+function layFort(lay: Layout): void {
+  lay.put('building_castle_red', 0, -6, 0, 9);
+  lay.ring(38, 'wall_straight', 'wall_straight_gate');
+  // Towers inside the wall, and two with war machines guarding the gate.
+  for (let i = 0; i < 4; i++) {
+    const a = 0.785 + i * 1.571;
+    lay.put('building_watchtower_red', Math.sin(a) * 30, Math.cos(a) * 30, a + Math.PI, 9);
+  }
+  lay.put('building_tower_cannon_red', -9, 30, 0, 9);
+  lay.put('building_tower_catapult_red', 9, 30, 0, 9);
+  // Tents and barracks round the castle.
+  const inner = ['building_tent_red', 'building_barracks_red', 'building_tent_red', 'building_tower_B_red', 'building_tent_red', 'building_archeryrange_red'];
+  inner.forEach((name, i) => {
+    const a = 1.05 + (i / inner.length) * (Math.PI * 2 - 2.1);
+    lay.put(name, Math.sin(a) * 21, Math.cos(a) * 21, a + Math.PI, name.includes('tent') ? 7 : 8);
+  });
+  lay.fire(-7, 13);
+  lay.fire(8, 14);
+  lay.fire(0, 22);
+  lay.prop('catapult_red_full', -14, 20, 0).solid = 2;
+  lay.prop('catapult_red_full', 15, 19, 0).solid = 2;
+  lay.prop('cannon_red_full', -4, 33, 0);
+  lay.prop('cannon_red_full', 4, 33, 0);
+  lay.clutter(['weaponrack', 'target', 'cannonball_pallet', 'crate_A_big', 'barrel'], -10, 8, 5, 5);
+  lay.clutter(['weaponrack', 'crate_long_A', 'barrel', 'sack'], 11, 7, 5, 5);
+  lay.prop('flag_red', -6, 40, 0);
+  lay.prop('flag_red', 6, 40, 0);
+  for (let i = 0; i < 6; i++) lay.prop('banner_red_full', Math.sin(i * 1.047 + 0.5) * 33, Math.cos(i * 1.047 + 0.5) * 33, i * 1.047 + 0.5 + Math.PI);
+}
+
+// ---------- the small places between villages ----------
+const SITE_CELL = 140;
+const sites = new Map<string, Village | null>();
+export const SITE_ICONS: Record<SiteType, string> = { camp: '⛺', farm: '🌾', ruin: '🏚️', tower: '🗼', lumber: '🪓', mine: '⛏️', shrine: '⛩️', merchant: '🧺', fishing: '🎣' };
+
+function siteIn(cx: number, cz: number): Village | null {
+  const key = `${cx},${cz}`;
+  const cached = sites.get(key);
+  if (cached !== undefined) return cached;
+  let site: Village | null = null;
+  const x = (cx + 0.3 + 0.4 * hash2(cx, cz, 211)) * SITE_CELL;
+  const z = (cz + 0.3 + 0.4 * hash2(cx, cz, 212)) * SITE_CELL;
+  const h = baseHeight(x, z);
+  const v = nearestVillage(x, z);
+  const clear = Math.hypot(x, z) > 150 && x < DUNGEON_SHIFT * REGION * 0.4 && z < DUNGEON_SHIFT * REGION * 0.4 && (!v || Math.hypot(v.x - x, v.z - z) > 120) && airstripDistance(x, z) > 60;
+  if (clear && h > 1.3 && h < 26 && hash2(cx, cz, 213) < (h < 2.3 ? 0.3 : 0.66)) {
+    const roll = hash2(cx, cz, 214);
+    const type: SiteType =
+      h < 2.3
+        ? 'fishing'
+        : h > 17
+          ? roll < 0.55
+            ? 'mine'
+            : 'tower'
+          : roll < 0.27
+            ? 'camp'
+            : roll < 0.48
+              ? 'farm'
+              : roll < 0.6
+                ? 'ruin'
+                : roll < 0.72
+                  ? 'tower'
+                  : roll < 0.82
+                    ? 'lumber'
+                    : roll < 0.91
+                      ? 'shrine'
+                      : 'merchant';
+    const lay = new Layout(x, z, hash2(cx, cz, 215) * Math.PI * 2, cx * 977 + cz * 13 + 3);
+    laySite(lay, type);
+    site = { id: `s${key}`, kind: 'site', site: type, x, z, h: Math.max(h, 2), buildings: lay.buildings, walls: [], fires: lay.fires };
+  }
+  sites.set(key, site);
+  return site;
+}
+
+function laySite(lay: Layout, type: SiteType): void {
+  if (type === 'camp') {
+    // A skeleton camp: tents round a fire behind a rough fence.
+    lay.fire(0, 0);
+    lay.put('building_tent_red', 0, -9, 0, 6);
+    lay.prop('tent', -8, -2, 1.2).solid = 1.8;
+    lay.prop('tent', 8, -2, -1.2).solid = 1.8;
+    lay.prop('tent', -5, 7, 2.4).solid = 1.8;
+    lay.prop('flag_red', 3, 8, 0);
+    lay.clutter(['weaponrack', 'crate_A_big', 'barrel', 'target', 'sack'], 6, 5, 4, 3);
+    for (let i = 0; i < 9; i++) {
+      const a = 0.9 + (i / 9) * (Math.PI * 2 - 1.8);
+      lay.put('fence_wood_straight', Math.sin(a) * 15, Math.cos(a) * 15, a + Math.PI / 2);
+    }
+  } else if (type === 'farm') {
+    lay.put('building_home_B_blue', -8, -6, 0.4);
+    lay.put(lay.roll() < 0.5 ? 'building_windmill_blue' : 'building_stables_blue', 9, -7, -0.4);
+    lay.put('building_grain', -9, 10, 0);
+    lay.put('building_grain', 4, 12, 0);
+    lay.put('building_grain', 15, 9, 1.57);
+    lay.clutter(['haybale', 'haybale', 'sack', 'wheelbarrow', 'bucket_water'], 1, 1, 6, 5);
+    lay.prop('trough', 4, -1);
+    lay.prop('horse_A', 6, 1);
+    lay.prop('cart', -2, 4).solid = 2.2;
+    for (let i = 0; i < 5; i++) lay.put('fence_wood_straight', -16, -8 + i * 4.6, 0);
+  } else if (type === 'ruin') {
+    lay.put('building_destroyed', 0, 0, 0);
+    lay.put('building_scaffolding', 9, 3, 0.6, 8).solid = 0;
+    lay.put('wall_straight', -10, 4, 0.5, 3).wall = 1;
+    lay.put('wall_straight', -6, -10, 1.9, 3).wall = 1;
+    lay.clutter(['resource_stone', 'crate_long_A', 'barrel', 'pallet'], 3, 8, 5, 5);
+  } else if (type === 'tower') {
+    lay.put(lay.pick(['building_watchtower_blue', 'building_tower_B_blue', 'building_tower_A_blue']), 0, 0, 0);
+    lay.prop('flag_blue', 6, 5, 0);
+    lay.clutter(['barrel', 'crate_A_big', 'sack', 'weaponrack'], -6, 5, 4, 3);
+    lay.fire(5, -5);
+  } else if (type === 'lumber') {
+    lay.put('building_lumbermill_blue', 0, -4, 0);
+    lay.prop('trees_A_cut', -12, 6);
+    lay.prop('trees_A_cut', 12, 8);
+    lay.clutter(['resource_lumber', 'resource_lumber', 'pallet', 'crate_B_small'], 2, 9, 6, 5);
+    lay.prop('cart', -6, 7).solid = 2.2;
+  } else if (type === 'mine') {
+    lay.put('building_mine_blue', 0, -4, 0);
+    lay.clutter(['resource_stone', 'resource_stone', 'crate_A_big', 'wheelbarrow', 'barrel'], 1, 10, 7, 6);
+    lay.prop('cart', 8, 6).solid = 2.2;
+    lay.fire(-8, 6);
+  } else if (type === 'shrine') {
+    lay.put('building_shrine_blue', 0, 0, 0);
+    for (let i = 0; i < 6; i++) lay.prop('banner_blue_full', Math.sin(i * 1.047) * 11, Math.cos(i * 1.047) * 11, i * 1.047 + Math.PI);
+  } else if (type === 'merchant') {
+    lay.put('building_tent_blue', 0, -5, 0, 7);
+    lay.prop('cart_merchant', 7, 3, 0.5).solid = 2.2;
+    lay.prop('horse_A', 9, 7, 0.5);
+    lay.clutter(['crate_A_big', 'crate_B_small', 'barrel', 'sack', 'crate_long_A'], -5, 4, 7, 4);
+    lay.prop('flag_blue', -3, 9, 0);
+    lay.fire(2, 9);
+  } else {
+    // A fishing camp by the sea.
+    lay.put('building_tent_blue', 0, -4, 0, 6);
+    lay.prop('boat', 6, 4, 0.4);
+    lay.prop('boat', -7, 5, 2.1);
+    lay.prop('boatrack', -2, 8, 0).solid = 1.5;
+    lay.clutter(['barrel', 'crate_B_small', 'bucket_water', 'sack'], 4, -1, 5, 3);
+    lay.fire(-5, -1);
+  }
+}
+
+/** The small places whose ground or buildings could reach a point. */
+function sitesTouching(x: number, z: number, reach: number): Village[] {
+  const found: Village[] = [];
+  const x0 = Math.floor((x - reach) / SITE_CELL);
+  const x1 = Math.floor((x + reach) / SITE_CELL);
+  const z0 = Math.floor((z - reach) / SITE_CELL);
+  const z1 = Math.floor((z + reach) / SITE_CELL);
+  for (let cz = z0; cz <= z1; cz++) {
+    for (let cx = x0; cx <= x1; cx++) {
+      const s = siteIn(cx, cz);
+      if (s) found.push(s);
+    }
+  }
+  return found;
+}
+
+/** Every small place around a point, for the map and for anything that happens there. */
+export function sitesNear(x: number, z: number, reach = 300): Village[] {
+  return sitesTouching(x, z, reach);
 }
 
 /** The world is divided into big squares; each may hold one village. */
@@ -107,30 +435,18 @@ function villageIn(rx: number, rz: number): Village | null {
                   ? 'maze'
                   : 'cave';
   if (kind) {
-    // Villages use the blue buildings and forts the red ones; the first of each set stands in the middle.
-    const first = kind === 'fort' ? FORT_FIRST : 0;
-    const others = (kind === 'fort' ? BUILDINGS.length : FORT_FIRST) - first - 1;
-    const buildings: Building[] = [{ def: first, x, z, rot: 0, scale: BUILDING_SCALE * 0.6 }];
-    const n = kind === 'fort' ? 5 : 6 + Math.floor(hash2(rx, rz, 74) * 3);
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + hash2(rx + i * 31, rz, 75) * 0.3;
-      const r = 26 + hash2(rx + i * 31, rz, 76) * 7;
-      const bx = x + Math.sin(a) * r;
-      const bz = z + Math.cos(a) * r;
-      // The first house in a village is the player's own and the next three are for friends.
-      // All four are the same cottage, so their doors are always in the same place.
-      const def = kind === 'village' && i < 4 ? 1 : first + 1 + Math.floor(hash2(rx + i * 31, rz, 77) * others);
-      // Every building faces the middle.
-      buildings.push({ def, x: bx, z: bz, rot: Math.atan2(x - bx, z - bz), scale: BUILDING_SCALE });
-    }
+    const lay = new Layout(x, z, 0, rx * 131 + rz * 7 + 1);
+    if (kind === 'village') layVillage(lay, rx, rz);
+    else if (kind === 'fort') layFort(lay);
     village = {
       id: key,
       kind,
       x,
       z,
       h: Math.max(h, 3),
-      buildings: kind === 'maze' || kind === 'cave' ? [] : buildings,
+      buildings: lay.buildings,
       walls: kind === 'maze' ? mazeWalls(x, z, rx * 7919 + rz * 104729 + 17, MAZE_CELLS, true) : [],
+      fires: lay.fires,
     };
   }
   villages.set(key, village);
@@ -190,12 +506,22 @@ function rawHeight(x: number, z: number): number {
   return h * (1 - k) + AIRSTRIP.h * k;
 }
 
+function siteHeight(x: number, z: number, h: number): number {
+  // Each small place sits well inside its own square, so only that square needs looking at.
+  const s = siteIn(Math.floor(x / SITE_CELL), Math.floor(z / SITE_CELL));
+  if (!s) return h;
+  const d = Math.hypot(s.x - x, s.z - z);
+  if (d > 34) return h;
+  const k = 1 - smoothstep(17, 34, d);
+  return h * (1 - k) + s.h * k;
+}
+
 function placedHeight(x: number, z: number): number {
   const h = baseHeight(x, z);
   const v = nearestVillage(x, z);
-  if (!v) return h;
+  if (!v) return siteHeight(x, z, h);
   const k = 1 - smoothstep(VILLAGE_RADIUS - 8, VILLAGE_RADIUS + 28, Math.hypot(v.x - x, v.z - z));
-  return h * (1 - k) + v.h * k;
+  return siteHeight(x, z, h * (1 - k) + v.h * k);
 }
 
 /** Mazes are a square of cells this many across, each this many metres wide. */
@@ -405,6 +731,20 @@ const beamMaterial = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide,
 });
 
+/** A way into a building. */
+export interface Door {
+  /** The same for every player, so friends who walk into the same building meet inside. */
+  id: string;
+  /** Which building model it is, which decides what is inside. */
+  name: string;
+  place: Village;
+  /** Which of the place's buildings this is. */
+  index: number;
+  x: number;
+  z: number;
+  rot: number;
+}
+
 /** Shared by everything that moves with the weather: the clock, and how hard the wind blows (1 is a breeze). */
 export const NATURE = { time: { value: 0 }, wind: { value: 1 } };
 
@@ -452,6 +792,20 @@ export class Terrain {
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), 0.8 * (1.0 - smoothstep(0.0, 0.1, abs(seaD - 0.04))));`,
       );
     };
+  }
+
+  /** Every door near a point that can be walked in by, with the spot to stand on in front of it. */
+  doorsNear(x: number, z: number): Door[] {
+    const v = nearestVillage(x, z);
+    const doors: Door[] = [];
+    for (const place of v ? [v, ...sitesTouching(x, z, 70)] : sitesTouching(x, z, 70)) {
+      place.buildings.forEach((b, index) => {
+        if (!b.enter || Math.hypot(b.x - x, b.z - z) > 90) return;
+        const reach = (b.solid ?? this.props.buildings[b.def].radius * b.scale * 0.8) + 1.2;
+        doors.push({ id: `${place.id}:${index}`, name: BUILDINGS[b.def], place, index, x: b.x + Math.sin(b.rot) * reach, z: b.z + Math.cos(b.rot) * reach, rot: b.rot });
+      });
+    }
+    return doors;
   }
 
   /** Load chunks near (x, z), nearest first, and drop far ones. Returns true while work remains. */
@@ -549,9 +903,12 @@ export class Terrain {
     const colliders: Collider[] = [];
     const pick = (list: PropDef[]): PropDef => list[Math.floor(rng() * list.length)];
     const village = nearestVillage(ox + CHUNK / 2, oz + CHUNK / 2);
+    const smallPlaces = sitesTouching(ox + CHUNK / 2, oz + CHUNK / 2, CHUNK / 2 + 26);
     // Keep the village green clear of trees and boulders.
     const inVillage = (x: number, z: number): boolean =>
-      airstripDistance(x, z) < 8 || (village !== null && Math.hypot(x - village.x, z - village.z) < VILLAGE_RADIUS);
+      airstripDistance(x, z) < 8 ||
+      (village !== null && Math.hypot(x - village.x, z - village.z) < VILLAGE_RADIUS + (village.kind === 'village' ? 6 : 0)) ||
+      smallPlaces.some((s) => Math.hypot(x - s.x, z - s.z) < 21);
     const put = (def: PropDef, x: number, z: number, y: number, targetHeight: number): number => {
       const scale = targetHeight / def.height;
       placements.push({ def, x, y, z, scale, rot: rng() * Math.PI * 2 });
@@ -613,12 +970,23 @@ export class Terrain {
 
     // ---- village buildings that stand in this chunk ----
     const built: Placement[] = [];
-    for (const b of village?.buildings ?? []) {
+    const places = village ? [village, ...smallPlaces] : smallPlaces;
+    for (const b of places.flatMap((p) => p.buildings)) {
       if (b.x < ox || b.x >= ox + CHUNK || b.z < oz || b.z >= oz + CHUNK) continue;
       const def = this.props.buildings[b.def];
+      const g = groundAt(b.x, b.z);
       // The models' front doors are on their +z side, which this turns to face the middle of the village.
-      built.push({ def, x: b.x, y: groundAt(b.x, b.z) - 0.15, z: b.z, scale: b.scale, rot: b.rot });
-      colliders.push({ x: b.x, z: b.z, r: def.radius * b.scale * 0.8, top: groundAt(b.x, b.z) + def.height * b.scale });
+      built.push({ def, x: b.x, y: g - 0.15, z: b.z, scale: b.scale, rot: b.rot });
+      const top = g + def.height * b.scale;
+      if (b.wall) {
+        // A row of circles along the wall; a gate is only solid at its posts.
+        for (let t = -0.85; t <= 0.86; t += 0.34) {
+          if (b.wall === 2 && Math.abs(t) < 0.6) continue;
+          colliders.push({ x: b.x + Math.cos(b.rot) * t * b.scale, z: b.z - Math.sin(b.rot) * t * b.scale, r: 0.34 * b.scale, top });
+        }
+      } else if (b.solid !== 0) {
+        colliders.push({ x: b.x, z: b.z, r: b.solid ?? def.radius * b.scale * 0.8, top });
+      }
     }
 
     // ---- maze walls that stand in this chunk ----
@@ -634,6 +1002,10 @@ export class Terrain {
 
     // ---- torches on the dungeon walls: the only glow down there besides his own ----
     const flames: Placement[] = [];
+    for (const f of places.flatMap((p) => p.fires ?? [])) {
+      if (f.x < ox || f.x >= ox + CHUNK || f.z < oz || f.z >= oz + CHUNK) continue;
+      flames.push({ def: FLAME, x: f.x, y: groundAt(f.x, f.z) + 0.9, z: f.z, scale: 2.4, rot: 0.6 });
+    }
     if (village?.kind === 'dungeon') {
       walled.forEach((w, i) => {
         if (i % 2 !== 0) return;
@@ -668,11 +1040,13 @@ export class Terrain {
     // ---- treasure chest, out in the wilds ----
     let chest: Star | null = null;
     const chestId = `c${id}`;
-    if (hash2(cx, cz, 131) < 0.14 && !this.collected.has(chestId)) {
-      const x = ox + 6 + rng() * (CHUNK - 12);
-      const z = oz + 6 + rng() * (CHUNK - 12);
+    // Camps and ruins always hide one.
+    const hoard = smallPlaces.find((s) => (s.site === 'camp' || s.site === 'ruin') && s.x >= ox && s.x < ox + CHUNK && s.z >= oz && s.z < oz + CHUNK);
+    if ((hoard || hash2(cx, cz, 131) < 0.14) && !this.collected.has(chestId)) {
+      const x = hoard ? hoard.x + 3 : ox + 6 + rng() * (CHUNK - 12);
+      const z = hoard ? hoard.z + 3 : oz + 6 + rng() * (CHUNK - 12);
       const h = groundAt(x, z);
-      if (h > 1.5 && Math.hypot(x, z) > 40 && !inVillage(x, z)) {
+      if (hoard || (h > 1.5 && Math.hypot(x, z) > 40 && !inVillage(x, z))) {
         const group = new THREE.Group();
         const model = this.props.chest.clone(true);
         model.scale.setScalar(1.4);

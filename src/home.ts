@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { loadModel } from './assets';
+import type { Item } from './places';
 
 /**
  * The inside of the player's house. The village buildings are solid models, so going through
@@ -42,6 +43,9 @@ export class Home {
   private readonly floor: THREE.MeshLambertMaterial;
   private selected = '';
   private readonly hinge = new THREE.Group();
+  /** What stands in the room when it is dressed as some other building. */
+  private readonly decor = new THREE.Group();
+  private readonly loot = new THREE.Group();
 
   constructor(scene: THREE.Scene) {
     const { halfX, halfZ, height } = ROOM;
@@ -65,7 +69,13 @@ export class Home {
     doorway.rotation.y = Math.PI;
     const light = new THREE.PointLight(0xfff0d0, 60, 30);
     light.position.set(0, height - 1, 0);
-    this.group.add(box, boards, this.hinge, doorway, light);
+    this.group.add(box, boards, this.hinge, doorway, light, this.decor, this.loot);
+    this.loot.visible = false;
+    void loadModel('home/coin_stack_medium.gltf').then((gltf) => {
+      const coins = gltf.scene.clone(true);
+      coins.scale.setScalar(SCALE);
+      this.loot.add(coins);
+    });
     this.group.position.set(ROOM.x, ROOM.y, ROOM.z);
     this.group.visible = false;
     scene.add(this.group);
@@ -101,8 +111,44 @@ export class Home {
     }
   }
 
+  /**
+   * Dress the room as the inside of some other building: its own colours, its own things,
+   * and perhaps some coins to find. Nothing in it can be moved.
+   */
+  dress(items: Item[], wall: number, floor: number, loot: [number, number] | null): void {
+    this.clear();
+    this.group.visible = true;
+    this.walls.color.setHex(wall);
+    this.floor.color.setHex(floor);
+    for (const [name, x, z, turns, y] of items) {
+      const spot = new THREE.Group();
+      spot.position.set(x, y ?? 0, z);
+      spot.rotation.y = (turns * Math.PI) / 2;
+      this.decor.add(spot);
+      void loadModel(`home/${name}.gltf`).then((gltf) => {
+        const item = gltf.scene.clone(true);
+        item.scale.setScalar(SCALE);
+        spot.add(item);
+      });
+    }
+    this.setLoot(loot);
+  }
+
+  /** Show the coins at a spot, or take them away. */
+  setLoot(at: [number, number] | null): void {
+    this.loot.visible = at !== null;
+    if (at) this.loot.position.set(at[0], 0, at[1]);
+  }
+
+  /** Slowly turn the coins so they catch the eye. */
+  spin(dt: number): void {
+    if (this.loot.visible) this.loot.rotation.y += dt * 1.5;
+  }
+
   /** Take all the furniture out, ready to show a different player's room. */
   clear(): void {
+    this.decor.clear();
+    this.loot.visible = false;
     for (const piece of this.pieces.values()) this.group.remove(piece);
     this.pieces.clear();
     this.selected = '';

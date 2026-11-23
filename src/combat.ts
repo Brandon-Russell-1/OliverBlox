@@ -165,6 +165,14 @@ export class Enemies {
     return e;
   }
 
+  /** Post guards at the given spots: a mix of kinds, never more than the game can comfortably draw. */
+  spawnGuards(spots: { x: number; z: number }[]): void {
+    spots.forEach((s, i) => {
+      if (this.list.length >= 13) return;
+      this.add([0, WARRIOR, ROGUE, 0, MAGE, WARRIOR][i % 6], s.x, s.z);
+    });
+  }
+
   /** Put the giant skeleton at a fort. */
   spawnBoss(x: number, z: number): void {
     if (!this.bossAlive) this.add(BOSS, x, z);

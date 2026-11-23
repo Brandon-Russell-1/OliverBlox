@@ -47,6 +47,13 @@ export const BUILDINGS = [
   ...['well', 'home_A', 'home_B', 'tavern', 'market', 'blacksmith', 'windmill', 'church', 'townhall', 'tower_A', 'stables'].map((n) => `building_${n}_blue`),
   // Skeleton forts are built from the red set; the castle comes first and stands in the middle.
   ...['castle', 'tower_A', 'tower_B', 'tent', 'barracks', 'watchtower'].map((n) => `building_${n}_red`),
+  // More buildings for the edges of villages, for forts, and for the places in between.
+  ...['archeryrange', 'barracks', 'docks', 'lumbermill', 'mine', 'shrine', 'watermill', 'workshop', 'tower_B', 'watchtower', 'tent'].map((n) => `building_${n}_blue`),
+  ...['tower_cannon', 'tower_catapult', 'archeryrange'].map((n) => `building_${n}_red`),
+  ...['building_destroyed', 'building_grain', 'building_scaffolding', 'building_stage_A', 'fence_wood_straight', 'fence_wood_straight_gate', 'wall_straight', 'wall_straight_gate'],
+  // Smaller things that make a place look lived in. They share the buildings' texture, so they cost nothing extra to draw.
+  ...['barrel', 'crate_A_big', 'crate_B_small', 'crate_long_A', 'sack', 'haybale', 'wheelbarrow', 'weaponrack', 'target', 'flag_red', 'flag_blue', 'tent', 'trough', 'bucket_water'],
+  ...['resource_lumber', 'resource_stone', 'cannonball_pallet', 'boat', 'boatrack', 'pallet', 'trees_A_cut', 'cart', 'cart_merchant', 'horse_A', 'catapult_red_full', 'cannon_red_full', 'banner_red_full', 'banner_blue_full'],
 ];
 export const FORT_FIRST = 11;
 
@@ -102,7 +109,8 @@ function toPropDef(gltf: GLTF): PropDef {
   const parts: THREE.BufferGeometry[] = [];
   gltf.scene.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (!mesh.isMesh) return;
+    // Gates are left standing open: their door leaves are not drawn.
+    if (!mesh.isMesh || /_door/.test(mesh.name)) return;
     let g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
     if (g.index) g = g.toNonIndexed();
     parts.push(g);

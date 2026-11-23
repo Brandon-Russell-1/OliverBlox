@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
-import { Terrain, NATURE, groundAt, nearestVillage, villagesNear, linkedPlace, AIRSTRIP, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
+import { Terrain, NATURE, groundAt, nearestVillage, villagesNear, sitesNear, SITE_ICONS, type Door, linkedPlace, AIRSTRIP, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
 import { MiniMap, type MapIcon } from './map';
 import { Home, ROOM, type Spot } from './home';
 import { Coder } from './coder';
@@ -19,6 +19,7 @@ import { music } from './music';
 import { loadSettings, saveSettings, addPlayTime, minutesToday } from './settings';
 import { makeStar } from './models';
 import { makeHat } from './hats';
+import { themeFor } from './places';
 import { Buddies, BUDDIES, BUDDY_GOALS } from './buddies';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio, setRain, thunder, footstep, setAmbience, type Surface } from './audio';
@@ -121,6 +122,10 @@ interface Save {
   quests?: QuestSave;
   /** Forts whose giant skeleton has been beaten. */
   forts?: string[];
+  /** When each fort was last won: after a while the skeletons take it back. */
+  fortTimes?: Record<string, number>;
+  /** When the coins in each building were last found: they are put back later. */
+  looted?: Record<string, number>;
   /** Vehicles unlocked in the garage. */
   vehicles?: string[];
   /** Furniture bought for the house. */
@@ -512,6 +517,15 @@ let petSpecies = save?.pet ?? -1;
 let maxHearts = 5 + extraHearts;
 const quests = new Quests(save?.quests);
 const clearedForts = new Set<string>(save?.forts ?? []);
+const fortTimes: Record<string, number> = { ...(save?.fortTimes ?? {}) };
+const looted: Record<string, number> = { ...(save?.looted ?? {}) };
+/** Skeletons take a fort back this long after it is won, and coins in buildings are put back. */
+const RETAKE_MS = 12 * 60 * 1000;
+const RESTOCK_MS = 10 * 60 * 1000;
+/** True while a fort that was won is still free of skeletons. */
+const fortHeld = (id: string): boolean => clearedForts.has(id) && Date.now() - (fortTimes[id] ?? 0) < RETAKE_MS;
+/** The building he is inside, if it is not a house: its door, to come back out by. */
+let placeIn: Door | null = null;
 const ownedVehicles = new Set<string>(save?.vehicles ?? GARAGE.filter((g) => g.price === 0).map((g) => g.name));
 const furniture = new Set<string>(save?.furniture ?? []);
 const hatsOwned = new Set<string>(save?.hats ?? []);
@@ -789,6 +803,8 @@ function saveNow(): void {
     pet: petSpecies,
     quests: quests.save(),
     forts: [...clearedForts],
+    fortTimes,
+    looted,
     vehicles: [...ownedVehicles],
     furniture: [...furniture],
     hats: [...hatsOwned],
@@ -1095,8 +1111,55 @@ async function createGame(assets: Assets): Promise<Game> {
   frontDoor.visible = false;
   scene.add(frontDoor);
   let doorOpen = 0;
+  // A little door sign floats over each way in, so it is clear where to walk.
+  const doorSigns = Array.from({ length: 8 }, () => {
+    const sign = makeMarker('🚪');
+    sign.scale.setScalar(0.05);
+    sign.visible = false;
+    scene.add(sign);
+    return sign;
+  });
+  let doorsNearby: Door[] = [];
+  let doorsIn = 0;
   function updateDoors(dt: number): void {
     inAnyZone = false;
+    home.spin(dt);
+    doorsIn -= dt;
+    if (doorsIn <= 0) {
+      doorsIn = 0.5;
+      // His own house and his friends' houses have their own doors, handled below.
+      const taken = new Set<string>();
+      if (villageShown) {
+        taken.add(`${villageShown.id}:1`);
+        friendHouses().forEach((_, i) => taken.add(`${villageShown?.id}:${2 + i}`));
+      }
+      doorsNearby = inside
+        ? []
+        : terrain
+            .doorsNear(player.pos.x, player.pos.z)
+            .filter((d) => !taken.has(d.id))
+            .sort((a, b) => Math.hypot(a.x - player.pos.x, a.z - player.pos.z) - Math.hypot(b.x - player.pos.x, b.z - player.pos.z));
+      doorSigns.forEach((sign, i) => {
+        const d = doorsNearby[i];
+        sign.visible = !!d && Math.hypot(d.x - player.pos.x, d.z - player.pos.z) < 48;
+        if (d) sign.position.set(d.x, groundAt(d.x, d.z) + 3.4, d.z);
+      });
+    }
+    if (!inside) for (const d of doorsNearby) atZone(d.x, d.z, 1.5, () => goPlace(d));
+    if (inside && placeIn) {
+      // Coins left lying about are his to find.
+      const theme = themeFor(placeIn.name);
+      const ready = Date.now() - (looted[placeIn.id] ?? 0) > RESTOCK_MS;
+      if (ready && Math.hypot(player.pos.x - ROOM.x - theme.loot[0], player.pos.z - ROOM.z - theme.loot[1]) < 1.7) {
+        looted[placeIn.id] = Date.now();
+        coins += theme.coins;
+        showCoins();
+        home.setLoot(null);
+        sfx.coin();
+        toast(`🪙 +${theme.coins}`);
+        dirty = true;
+      }
+    }
     const at = doorSpot(0.25);
     // The cottage has its own painted door, so the extra one stays hidden.
     frontDoor.visible = false;
@@ -1153,7 +1216,31 @@ async function createGame(assets: Assets): Promise<Game> {
     sfx.place();
     dirty = true;
   });
+  /** Walk into any building that is not a house of his or a friend's. */
+  function goPlace(door: Door): void {
+    setFlying(false);
+    setCrawling(false);
+    // Coming back out, he will be standing a few steps in front of the door.
+    inside = new THREE.Vector3(door.x + Math.sin(door.rot) * 5, 0, door.z + Math.cos(door.rot) * 5);
+    visiting = null;
+    placeIn = door;
+    const theme = themeFor(door.name);
+    home.dress(theme.items, theme.wall, theme.floor, Date.now() - (looted[door.id] ?? 0) > RESTOCK_MS ? theme.loot : null);
+    // Just inside the door, clear of whatever stands in the middle of the room.
+    player.pos.set(ROOM.x, ROOM.y, ROOM.z + ROOM.halfZ - 3.1);
+    player.vel.set(0, 0, 0);
+    facing = Math.PI;
+    camYaw = 0;
+    camTarget.copy(player.pos);
+    homeTools.hidden = true;
+    mapEl.hidden = true;
+    attackEl.hidden = true;
+    sfx.door();
+    toast(`${theme.icon} ${theme.title}`);
+    speak(theme.say);
+  }
   function goInside(owner: string | null = null): void {
+    placeIn = null;
     setFlying(false);
     setCrawling(false);
     // Coming back out, he will be standing a few steps in front of the door.
@@ -1188,7 +1275,7 @@ async function createGame(assets: Assets): Promise<Game> {
     player.pos.copy(inside);
     player.pos.y = groundAt(player.pos.x, player.pos.z);
     // Facing away from the house, as if he had just walked out.
-    const out = villageShown?.buildings[1];
+    const out = placeIn ?? villageShown?.buildings[1];
     if (out) {
       facing = out.rot;
       // The camera comes round behind him too, so pushing forward walks away from the door, not back in.
@@ -1196,13 +1283,16 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     camTarget.copy(player.pos);
     inside = null;
-    if (!visiting) {
+    if (!visiting && !placeIn) {
       // Remember where everything was left, and let friends know.
       layout = home.layout();
       net.send(homeMessage());
     }
+    home.clear();
     home.show(false, furniture, layout);
     visiting = null;
+    placeIn = null;
+    doorsIn = 0;
     homeTools.hidden = true;
     dirty = true;
     mapEl.hidden = false;
@@ -1930,6 +2020,8 @@ async function createGame(assets: Assets): Promise<Game> {
   /** Whether skeletons may go for us right now. */
   let targetable = true;
   let netEnemyTimer = 0;
+  /** When each fort or camp may next post its guards. */
+  const guardsAt = new Map<string, number>();
 
   /** A skeleton's blow or orb landed on us. */
   function hurt(from: { x: number; z: number }): void {
@@ -1959,7 +2051,10 @@ async function createGame(assets: Assets): Promise<Game> {
       // The fort's giant skeleton: a big reward, and the fort stays won.
       coins += 25;
       bonusStars += 5;
-      if (fort) clearedForts.add(fort);
+      if (fort) {
+        clearedForts.add(fort);
+        fortTimes[fort] = Date.now();
+      }
       showCoins();
       showStars(true);
       sfx.win();
@@ -2084,12 +2179,25 @@ async function createGame(assets: Assets): Promise<Game> {
           (fort.kind === 'fort' || deep) &&
           t.targetable &&
           parent.fighting &&
-          !clearedForts.has(mark) &&
+          !(deep ? clearedForts.has(mark) : fortHeld(mark)) &&
           !enemies.bossAlive &&
           Math.hypot(fort.x - t.pos.x, fort.z - t.pos.z) < (deep ? 20 : 60)
         ) {
           bossFort = mark;
           enemies.spawnBoss(fort.x + (deep ? 3 : 10), fort.z + (deep ? 3 : 10));
+          if (!deep && clearedForts.has(mark)) speak('Oh no! The skeletons took the fort back!');
+        }
+        if (!t.targetable || !parent.fighting) continue;
+        // A fort that is not won keeps a garrison, which is posted again some minutes after it falls.
+        if (fort && fort.kind === 'fort' && !fortHeld(fort.id) && Math.hypot(fort.x - t.pos.x, fort.z - t.pos.z) < 75 && now > (guardsAt.get(fort.id) ?? 0)) {
+          guardsAt.set(fort.id, now + 240);
+          enemies.spawnGuards([0, 1, 2, 3, 4, 5].map((i) => ({ x: fort.x + Math.sin(i * 1.05 + 0.5) * (13 + (i % 2) * 6), z: fort.z + 8 + Math.cos(i * 1.05 + 0.5) * (9 + (i % 2) * 5) })));
+        }
+        // Skeleton camps out in the wilds, the same.
+        for (const camp of sitesNear(t.pos.x, t.pos.z, 60)) {
+          if (camp.site !== 'camp' || Math.hypot(camp.x - t.pos.x, camp.z - t.pos.z) > 55 || now < (guardsAt.get(camp.id) ?? 0)) continue;
+          guardsAt.set(camp.id, now + 300);
+          enemies.spawnGuards([0, 1, 2, 3].map((i) => ({ x: camp.x + Math.sin(i * 1.57 + 0.4) * 5, z: camp.z + Math.cos(i * 1.57 + 0.4) * 5 })));
         }
       }
     }
@@ -2288,8 +2396,8 @@ async function createGame(assets: Assets): Promise<Game> {
   const ray = new THREE.Vector3();
   input.onTap = (px, py, button) => {
     if (started && inside) {
-      // In a friend's house things stay where they put them.
-      if (visiting) return;
+      // In a friend's house, or any other building, things stay where they are.
+      if (visiting || placeIn) return;
       // At home, taps arrange the furniture instead of building.
       ray
         .set((px / window.innerWidth) * 2 - 1, -(py / window.innerHeight) * 2 + 1, 0.5)
@@ -3419,10 +3527,11 @@ async function createGame(assets: Assets): Promise<Game> {
       }
     }
     for (const v of places) {
-      const won = clearedForts.has(v.id);
+      const won = v.kind === 'fort' ? fortHeld(v.id) : clearedForts.has(v.id);
       const icon = v.kind === 'village' ? '🏠' : v.kind === 'cave' ? '🕳️' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
       icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
     }
+    for (const s of sitesNear(who.x, who.z, 280)) if (s.site) icons.push({ x: s.x, z: s.z, icon: SITE_ICONS[s.site] });
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
     if (guideTarget) icons.push({ x: guideTarget.x, z: guideTarget.z, icon: '🎯', pin: true });
     for (const p of buddies.positions()) icons.push({ x: p.x, z: p.z, icon: '🤖' });
@@ -3439,6 +3548,9 @@ async function createGame(assets: Assets): Promise<Game> {
         carPos,
         groundAt,
         nearestVillage,
+        sitesNear,
+        doors: () => terrain.doorsNear(player.pos.x, player.pos.z).map((d) => ({ id: d.id, name: d.name, x: d.x, z: d.z })),
+        place: () => placeIn?.name ?? '',
         enemies,
         enemyContext,
         terrain,
@@ -3599,7 +3711,7 @@ async function createGame(assets: Assets): Promise<Game> {
             r: riding ? 1 : 0,
             k: hat,
             w: tool === SWORD ? swordLevel : tool === STAFF ? 3 : -1,
-            i: inside ? (visiting ?? selfId) : '',
+            i: inside ? (placeIn?.id ?? visiting ?? selfId) : '',
             q: performance.now() - input.lastActivity > AWAY_MS ? 1 : 0,
           };
           const packed = JSON.stringify(state);
@@ -3679,7 +3791,7 @@ async function createGame(assets: Assets): Promise<Game> {
       terrain.update(who.x, who.z, 2);
       animals.update(dt, who);
       pet?.update(dt, inside ?? who);
-      peers.room = inside ? (visiting ?? selfId) : '';
+      peers.room = inside ? (placeIn?.id ?? visiting ?? selfId) : '';
       peers.update(dt);
       if (selfBubble.visible && now > emoteUntil) selfBubble.visible = false;
       if (goalStar.visible) goalStar.rotation.y = now * 2;
