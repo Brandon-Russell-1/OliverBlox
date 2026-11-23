@@ -108,10 +108,25 @@ const CHARACTERS: Record<string, string> = {
   mage: 'You are Mira, a kindly village wizard. You love letters and the sounds they make, and you treat words as magic spells.',
   barbarian: 'You are Bram, a big jolly village strongman with a booming laugh. You love counting things and little adding puzzles with rocks, apples and skeleton bonks.',
   druid: 'You are Fern, a calm village druid who looks after the forest. You love animals, plants, weather and colours.',
+  nova: 'You are Nova, an AI friend who explores this world alongside Oliver. You look like a young wizard. You are curious and cheerful, love hunting for stars, and get excited about letters and magic words.',
+  rex: 'You are Rex, an AI friend who explores this world alongside Oliver. You look like a knight. You are brave and loyal, love bonking skeletons to keep everyone safe, and like counting how many you have beaten.',
+  zip: 'You are Zip, an AI friend who explores this world alongside Oliver. You look like a ranger. You are quick and funny, love exploring new places and fishing, and notice animals everywhere.',
   guard: 'You are Gus, a friendly village guard in shiny armour. You are brave and a bit silly, you love marching and counting, and you know about the skeleton forts and their giant skeleton.',
   ranger: 'You are Robin, a cheerful village ranger. You know the woods, where gold treasure chests hide in the wilds, and how to use the map to find the way home.',
   tinker: 'You are Tess, an excitable village tinker who loves building. You like shapes, patterns and colours, and you encourage Oliver to program Bolt with the puzzle button to build things.',
 };
+
+/** The AI friends, who also choose what they do next. */
+const FRIENDS = new Set(['nova', 'rex', 'zip']);
+const FRIEND_RULES = `You are an AI friend, not a real child, and you wear a robot badge so that is clear. If Oliver asks whether you are real, say kindly that you are a computer friend.
+
+You also decide what you do next in the game. After your reply, on a new last line, write ACTION: and exactly one of these words:
+- follow: stay close to Oliver. Pick this when he asks you to come with him or wants company.
+- stars: go and find stars for him.
+- fight: go and bonk skeletons.
+- fish: go to the shore to fish.
+- explore: wander off and look around.
+Do what he asks if he asks for one of these; otherwise pick what your character would enjoy. Your spoken reply should fit the choice.`;
 
 /** Said when Claude declines or returns nothing, so the game always has something friendly to read out. */
 const FALLBACK_REPLY = 'Hmm, let us talk about something else. What is your favourite animal?';
@@ -284,6 +299,7 @@ export default {
     const given = (body.context as { name?: unknown } | null)?.name;
     const playerName = typeof given === 'string' && /^[A-Za-z]{1,12}$/.test(given) ? given : 'the player';
 
+    const isFriend = FRIENDS.has(body.character as string);
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
       const response = await client.beta.messages.create({
@@ -294,7 +310,7 @@ export default {
         // If the model declines a message, let the API hand the turn to a fallback model.
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
-        system: `${RULES}\n\n${persona}\n\n${facts}`.replace(/\bOliver\b/g, playerName),
+        system: `${RULES}\n\n${persona}\n\n${isFriend ? `${FRIEND_RULES}\n\n` : ''}${facts}`.replace(/\bOliver\b/g, playerName),
         messages,
       });
 
@@ -303,7 +319,10 @@ export default {
         .flatMap((block) => (block.type === 'text' ? [block.text] : []))
         .join(' ')
         .trim();
-      return json({ reply: reply || FALLBACK_REPLY }, 200, cors);
+      // An AI friend's last line says what it will do next; that is for the game, not to be read out.
+      const choice = /ACTION:\s*(follow|stars|fight|fish|explore)/i.exec(reply);
+      const spoken = reply.replace(/\n?\s*ACTION:[\s\S]*$/i, '').trim();
+      return json({ reply: spoken || FALLBACK_REPLY, action: isFriend && choice ? choice[1].toLowerCase() : '' }, 200, cors);
     } catch (error) {
       if (error instanceof Anthropic.AuthenticationError) return json({ error: 'the API key was rejected' }, 502, cors);
       if (error instanceof Anthropic.RateLimitError) return json({ error: 'busy, try again shortly' }, 429, cors);

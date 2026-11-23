@@ -5,6 +5,8 @@ export interface ParentSettings {
   fighting: boolean;
   /** Minutes of play allowed per day; 0 for no limit. */
   limit: number;
+  /** Whether the computer-run friends are about. */
+  friends: boolean;
 }
 
 const SETTINGS_KEY = 'oliverblox-parent';
@@ -13,9 +15,9 @@ const TIME_KEY = 'oliverblox-time';
 export function loadSettings(): ParentSettings {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') as Partial<ParentSettings>;
-    return { music: s.music ?? true, fighting: s.fighting ?? true, limit: Math.max(0, Number(s.limit) || 0) };
+    return { music: s.music ?? true, fighting: s.fighting ?? true, limit: Math.max(0, Number(s.limit) || 0), friends: s.friends ?? true };
   } catch {
-    return { music: true, fighting: true, limit: 0 };
+    return { music: true, fighting: true, limit: 0, friends: true };
   }
 }
 

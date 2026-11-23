@@ -19,6 +19,7 @@ import { music } from './music';
 import { loadSettings, saveSettings, addPlayTime, minutesToday } from './settings';
 import { makeStar } from './models';
 import { makeHat } from './hats';
+import { Buddies, BUDDIES, BUDDY_GOALS } from './buddies';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio, setRain, thunder } from './audio';
 import { makeRobot, makeClouds } from './models';
@@ -617,6 +618,7 @@ const breakEl = $('break');
 const setMusic = $<HTMLInputElement>('set-music');
 const setFighting = $<HTMLInputElement>('set-fighting');
 const setLimit = $<HTMLInputElement>('set-limit');
+const setFriends = $<HTMLInputElement>('set-friends');
 const setQuality = $<HTMLSelectElement>('set-quality');
 setQuality.addEventListener('change', () => {
   qualityMode = setQuality.value;
@@ -628,12 +630,13 @@ setQuality.addEventListener('change', () => {
 function applySettings(): void {
   parent.music = setMusic.checked;
   parent.fighting = setFighting.checked;
+  parent.friends = setFriends.checked;
   parent.limit = Math.max(0, Math.floor(Number(setLimit.value) || 0));
   saveSettings(parent);
   music.setEnabled(parent.music && started);
   breakEl.hidden = parent.limit === 0 || minutesToday() < parent.limit;
 }
-for (const input of [setMusic, setFighting, setLimit]) input.addEventListener('change', applySettings);
+for (const input of [setMusic, setFighting, setLimit, setFriends]) input.addEventListener('change', applySettings);
 
 // Each player picks their own name on the start screen; it is kept on this device.
 const nameInput = $<HTMLInputElement>('player-name');
@@ -791,6 +794,7 @@ gear.addEventListener('pointerdown', (e) => {
     gearHint.hidden = true;
     setMusic.checked = parent.music;
     setFighting.checked = parent.fighting;
+    setFriends.checked = parent.friends;
     setLimit.value = String(parent.limit);
     setQuality.value = qualityMode;
     $('played').textContent = `Played today: ${minutesToday()} minutes`;
@@ -1645,6 +1649,8 @@ async function createGame(assets: Assets): Promise<Game> {
   // ---- pet: a befriended animal that follows along ----
   let pet: Pet | null = petSpecies >= 0 && assets.pets[petSpecies] ? new Pet(scene, assets.pets[petSpecies], player.pos) : null;
   let nearAnimal: Animal | null = null;
+  /** The AI friend he is standing next to, if any. */
+  let nearBuddy: { id: string; name: string } | null = null;
   function befriend(animal: Animal): void {
     petSpecies = animals.adopt(animal);
     // The old pet goes back to the wild.
@@ -1666,6 +1672,7 @@ async function createGame(assets: Assets): Promise<Game> {
     else if (driving) exitVehicle();
     else if (holeNear) useHole(holeNear);
     else if (nearVillager) talkTo(nearVillager.persona);
+    else if (nearBuddy) chat.open(PERSONAS[nearBuddy.id]);
     else if (nearFlag()) startRace(false);
     else if (nearAnimal) befriend(nearAnimal);
     else if (nearDoor()) goInside();
@@ -2931,6 +2938,79 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     return best;
   };
+  // ---- AI friends: computer-run companions who share the world ----
+  const buddies = new Buddies(
+    scene,
+    assets.clips,
+    {
+      collide: (pos, radius) => {
+        terrain.collide(pos, radius);
+      },
+      nearestStar: (pos) => {
+        let best: THREE.Vector3 | null = null;
+        let bestDist = 140;
+        for (const s of terrain.stars) {
+          const d = Math.hypot(s.pos.x - pos.x, s.pos.z - pos.z);
+          if (d < bestDist) {
+            best = s.pos;
+            bestDist = d;
+          }
+        }
+        return best;
+      },
+      takeStar: (at, by) => {
+        // A friend's star counts for the player too: they are on the same team.
+        const ids = terrain.collect(at, 3);
+        if (ids.length === 0) return;
+        net.send({ t: 'got', ids });
+        gotPickups(ids, true);
+        toast(`🤖 ${by} ⭐`);
+      },
+      nearestEnemy: (pos, range) => (enemies.remote ? null : enemies.nearest(pos, range)),
+      hitEnemy: (at) => {
+        if (enemies.damageAt(at, 2.6, 1, enemyContext) > 0) sfx.bonk();
+      },
+    },
+    player.pos,
+  );
+  chat.onAction = (id, action) => buddies.setGoal(id, action);
+  const GOAL_ICONS: Record<string, string> = { follow: '👣', stars: '⭐', fight: '⚔️', fish: '🎣', explore: '🧭' };
+  let decideTimer = 40;
+  let decideTurn = 0;
+  /** Every so often one friend decides what to do next: Claude chooses if the helper is set up, chance if not. */
+  function updateBuddies(dt: number): void {
+    buddies.visible = parent.friends && inside === null;
+    buddies.update(dt, player.pos, now);
+    decideTimer -= dt;
+    if (decideTimer > 0 || !parent.friends || chat.isOpen) return;
+    // One friend at a time, so each decides about every four minutes.
+    decideTimer = 80;
+    const who = BUDDIES[decideTurn++ % BUDDIES.length];
+    const ai = getAiSettings();
+    const choose = (goal: string, said: string): void => {
+      buddies.setGoal(who.id, goal);
+      toast(`🤖 ${who.name} ${GOAL_ICONS[goal] ?? ''}${said ? `  ${said}` : ''}`.slice(0, 80));
+    };
+    if (!ai.url) {
+      choose(BUDDY_GOALS[Math.floor(Math.random() * BUDDY_GOALS.length)], '');
+      return;
+    }
+    fetch(`${ai.url}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-family-code': ai.code },
+      body: JSON.stringify({
+        character: who.id,
+        messages: [{ role: 'user', content: '(Nobody is talking to you right now. Decide what you would like to do next and say it in one very short sentence.)' }],
+        context: chat.context(who.id),
+      }),
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<{ reply?: string; action?: string }>) : null))
+      .then((data) => {
+        if (data?.action) choose(data.action, data.reply ?? '');
+      })
+      .catch(() => undefined);
+  }
+
   // ---- the menu: everything that is not needed every second lives behind one button ----
   const menuEl = $('menu');
   $('menu-btn').addEventListener('click', () => {
@@ -3112,6 +3192,7 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
     if (guideTarget) icons.push({ x: guideTarget.x, z: guideTarget.z, icon: '🎯', pin: true });
+    for (const p of buddies.positions()) icons.push({ x: p.x, z: p.z, icon: '🤖' });
     const mine = villageShown?.buildings[1];
     if (mine) icons.push({ x: mine.x, z: mine.z, icon: '🏡' });
     miniMap.update(dt, who.x, who.z, camYaw, driving ? carHeading : facing, icons);
@@ -3157,6 +3238,7 @@ async function createGame(assets: Assets): Promise<Game> {
           if (bonus) bonus.start -= 99;
         },
         blocksApi: () => blocks,
+        buddies,
         peersGear: () => peers.gearDebug(),
         peersDebug: () => peers.positions().map((q) => q.icon).concat(peers.vehiclesDebug()),
         setClock: (seconds: number) => {
@@ -3186,6 +3268,7 @@ async function createGame(assets: Assets): Promise<Game> {
           forts: clearedForts.size,
           owned: ownedVehicles.size,
           online: net.connected,
+          buddyGoals: BUDDIES.map((b) => `${b.id}:${buddies.goalOf(b.id)}`).join(' '),
           quality,
           visiting,
           homes: homes.size,
@@ -3279,6 +3362,7 @@ async function createGame(assets: Assets): Promise<Game> {
           });
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
+        nearBuddy = driving ? null : buddies.nearest(player.pos, 4);
         // The shop shuts when he walks away from the shopkeeper.
         if (!shopEl.hidden && nearVillager?.persona !== 'shop') shopEl.hidden = true;
         const talk = nearVillager?.persona === 'shop' ? '🛒' : '💬';
@@ -3299,6 +3383,8 @@ async function createGame(assets: Assets): Promise<Game> {
                     : '🪜'
                   : nearVillager
                   ? talk
+                  : nearBuddy
+                    ? '🤖'
                   : nearFlag()
                     ? '🏁'
                     : nearAnimal
@@ -3352,6 +3438,7 @@ async function createGame(assets: Assets): Promise<Game> {
         // Doorways work again once he has stepped clear of all of them.
         if (!inAnyZone && !travelling) zonesArmed = true;
         updateGuide(dt, who);
+        updateBuddies(dt);
       }
       for (const s of terrain.stars) {
         const mesh = s.group.children[0];

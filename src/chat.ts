@@ -62,6 +62,30 @@ export const PERSONAS: Record<string, Persona> = {
       'Trees drink water with their roots. What do you drink?',
     ],
   },
+  nova: {
+    id: 'nova',
+    name: 'Nova',
+    emoji: '🤖',
+    voice: { pitch: 1.5, rate: 1 },
+    hello: 'Hi! I am Nova, your computer friend. What shall we do?',
+    lines: ['Ooh, I think I can see a star over there!', 'Let us look for stars together.', 'Magic starts with M. Mmm!'],
+  },
+  rex: {
+    id: 'rex',
+    name: 'Rex',
+    emoji: '🤖',
+    voice: { pitch: 0.7, rate: 0.95 },
+    hello: 'Hello! I am Rex, your computer friend. I will keep you safe!',
+    lines: ['Any skeletons about? I will bonk them!', 'Stay close and I will guard you.', 'I have bonked lots today. How many have you?'],
+  },
+  zip: {
+    id: 'zip',
+    name: 'Zip',
+    emoji: '🤖',
+    voice: { pitch: 1.25, rate: 1.1 },
+    hello: 'Hey! I am Zip, your computer friend. Want to explore?',
+    lines: ['I wonder what is over that hill.', 'Shall we go fishing?', 'I saw a fox! Did you see it?'],
+  },
   guard: {
     id: 'guard',
     name: 'Gus',
@@ -167,6 +191,8 @@ export class Chat {
   private readonly mic = $('chat-mic');
   /** Facts about the game sent with each message, so the character knows what Oliver is up to. */
   context: (personaId: string) => object = () => ({});
+  /** An AI friend has chosen what to do next. */
+  onAction: (personaId: string, action: string) => void = () => {};
 
   constructor() {
     $('chat-close').addEventListener('click', () => this.close());
@@ -246,7 +272,11 @@ export class Chat {
           headers: { 'content-type': 'application/json', 'x-family-code': code },
           body: JSON.stringify({ character: persona.id, messages: history.slice(-12), context: this.context(persona.id) }),
         });
-        if (res.ok) reply = ((await res.json()) as { reply?: string }).reply ?? '';
+        if (res.ok) {
+          const data = (await res.json()) as { reply?: string; action?: string };
+          reply = data.reply ?? '';
+          if (data.action) this.onAction(persona.id, data.action);
+        }
         else log(`(AI error ${res.status} from ${persona.name})`);
       } catch {
         log(`(could not reach the AI for ${persona.name})`);
@@ -258,6 +288,9 @@ export class Chat {
       // No AI configured or it failed: fall back to a scripted line and forget the unanswered turn.
       history.pop();
       reply = persona.lines[Math.floor(Math.random() * persona.lines.length)];
+      // Without the AI, a friend still does what it is plainly asked to.
+      const asked = /follow|come|with me/i.test(message) ? 'follow' : /star/i.test(message) ? 'stars' : /fight|skeleton|bonk/i.test(message) ? 'fight' : /fish/i.test(message) ? 'fish' : /explore|go away|look around/i.test(message) ? 'explore' : '';
+      if (asked) this.onAction(persona.id, asked);
     }
     this.histories.set(persona.id, history.slice(-12));
     log(`${persona.name}: ${reply}`);

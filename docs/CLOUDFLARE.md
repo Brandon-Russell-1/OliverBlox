@@ -81,6 +81,7 @@ Open a terminal in the project's `worker` folder for all of these.
 - **Set a spending cap.** In the Anthropic console, under **Settings > Limits**, set a monthly limit you are comfortable with. This is the real safety net: once it is reached, the characters fall back to their scripted lines and nothing more is charged.
 - **Expected cost.** The Worker uses Claude Opus 5.5 and asks for very short replies, so a reply should cost roughly a cent or less. I have not measured this against real play, so check the console's usage page after the first session.
 - **A cheaper model.** To cut the cost a lot, change `MODEL` in `worker/src/index.ts` to `claude-haiku-5-5`, change `client.beta.messages.create` to `client.messages.create`, delete the two lines `betas: [...]` and `fallbacks: 'default'` (that model does not support them), and run `npx wrangler deploy` again.
+- **AI friends cost a little on their own.** Each of the three AI friends asks Claude what to do next about every four minutes, so they make roughly 45 short requests an hour of play even if nobody talks to them. Switch **AI friends** off in the grown-ups panel to stop that.
 - **Read what was said.** The grown-ups panel shows everything Oliver and the characters have said on that device.
 - **Change the rules.** Edit the `RULES` text or the character descriptions in `worker/src/index.ts`, then run `npx wrangler deploy`.
 - **Turn it off.** Clear the address in the grown-ups panel on a device, or delete the Worker from the Cloudflare dashboard.
