@@ -1,3 +1,4 @@
+import { rigHorse, sit, type Gait } from './horse';
 import * as THREE from 'three';
 import { Actor } from './actor';
 import { loadModel, CHARACTERS } from './assets';
@@ -121,6 +122,9 @@ interface Peer {
   name: string;
   vehicleName: string;
   vehicle: THREE.Object3D | null;
+  /** For a friend on horseback: what moves the horse's legs, and how far through its stride it is. */
+  gait: Gait | null;
+  stride: number;
   petSpecies: number;
   pet: Pet | null;
   /** The hat and held item last put on their model, so it is only redone when it changes. */
@@ -241,7 +245,7 @@ export class Peers {
       const label = makeLabel();
       group.add(marker, label);
       this.scene.add(group);
-      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, petSpecies: -1, pet: null, gear: '', badge: face, emoteTime: 0, vel: new THREE.Vector3(), since: 9 };
+      peer = { state, pos: new THREE.Vector3(), group, actor: null, hero: '', face, marker, label, name: '', vehicleName: '', vehicle: null, gait: null, stride: 0, petSpecies: -1, pet: null, gear: '', badge: face, emoteTime: 0, vel: new THREE.Vector3(), since: 9 };
       this.map.set(id, peer);
     }
     // Work out their speed from the last two reports, so they keep moving smoothly until the next one.
@@ -258,6 +262,7 @@ export class Peers {
       peer.vehicleName = v;
       peer.vehicle?.removeFromParent();
       peer.vehicle = null;
+      peer.gait = null;
       if (v) {
         const target = peer;
         const boat = v.startsWith('boat');
@@ -267,6 +272,7 @@ export class Peers {
           target.vehicle = gltf.scene.clone(true);
           target.vehicle.scale.setScalar(horse ? 4.8 : 2);
           target.vehicle.position.y = horse ? 0 : boat ? -0.25 : 0.6;
+          if (horse) target.gait = rigHorse(target.vehicle);
           target.group.add(target.vehicle);
         });
       }
@@ -349,7 +355,7 @@ export class Peers {
       const mounted = peer.vehicleName === 'horse';
       if (peer.actor) {
         peer.actor.root.visible = (peer.vehicleName === '' || mounted) && state.r !== 1;
-        peer.actor.root.position.y = mounted ? 1.1 : 0;
+        peer.actor.root.position.y = mounted ? 1.3 : 0;
       }
       peer.pet?.update(dt, p);
       // Dress them as they are dressed on their own screen.
@@ -369,6 +375,12 @@ export class Peers {
       }
       peer.actor?.play(state.a);
       peer.actor?.update(dt);
+      if (mounted) {
+        const speed = peer.since < 2.5 ? Math.hypot(peer.vel.x, peer.vel.z) : 0;
+        peer.stride += speed * dt * 1.5;
+        peer.gait?.(peer.stride, Math.min(1, speed / 6), false, peer.stride + performance.now() / 1000);
+        if (peer.actor) sit(peer.actor.root);
+      }
     }
   }
 }

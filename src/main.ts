@@ -20,6 +20,7 @@ import { loadSettings, saveSettings, addPlayTime, minutesToday } from './setting
 import { makeStar } from './models';
 import { makeHat } from './hats';
 import { themeFor } from './places';
+import { rigHorse, sit, type Gait } from './horse';
 import { Buddies, BUDDIES, BUDDY_GOALS } from './buddies';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio, setRain, thunder, footstep, setAmbience, type Surface } from './audio';
@@ -40,7 +41,7 @@ const VEHICLE_SCALE = 2;
 const HORSE_MAX = 14;
 const HORSE_SCALE = 4.8;
 /** How high above the ground the rider's feet hang. */
-const SADDLE = 1.1;
+const SADDLE = 1.3;
 /** The most extra hearts and armor the market sells. */
 const MAX_EXTRA_HEARTS = 5;
 const MAX_ARMOR = 3;
@@ -1559,6 +1560,8 @@ async function createGame(assets: Assets): Promise<Game> {
   scene.add(vehicle);
   let vehicleKind: GarageItem['kind'] = 'car';
   let propeller: THREE.Object3D | null = null;
+  /** Moves the horse's legs, head and tail; null for anything with wheels. */
+  let horseGait: Gait | null = null;
   let wheels: THREE.Object3D[] = [];
   let vehicleToken = 0;
 
@@ -1566,6 +1569,7 @@ async function createGame(assets: Assets): Promise<Game> {
     const token = ++vehicleToken;
     let model: THREE.Object3D;
     propeller = null;
+    horseGait = null;
     if (item.kind === 'plane') {
       // No aeroplane in the model packs, so this one is built from simple shapes.
       model = makePlane();
@@ -1575,6 +1579,7 @@ async function createGame(assets: Assets): Promise<Game> {
       if (token !== vehicleToken) return;
       model = gltf.scene.clone(true);
       model.scale.setScalar(HORSE_SCALE);
+      horseGait = rigHorse(model);
       model.traverse((o) => {
         o.castShadow = true;
       });
@@ -2726,6 +2731,8 @@ async function createGame(assets: Assets): Promise<Game> {
   }
 
   let horseUp = 0;
+  /** For testing: hold the horse in one pose (stride, pace, in the air). */
+  let poseTest: number[] | null = null;
   let stride = 0;
   /** A horse: turns on the spot, jumps, and carries him where he can be seen and can swing a sword. */
   function updateHorse(dt: number, controlled: boolean): void {
@@ -2779,9 +2786,11 @@ async function createGame(assets: Assets): Promise<Game> {
     carRoll += ((controlled ? -input.moveX * pace * 0.08 : 0) - carRoll) * Math.min(1, 8 * dt);
     vehicle.position.copy(carPos).setY(carPos.y + bob);
     vehicle.rotation.set(carPitch, carHeading, carRoll);
+    if (poseTest) horseGait?.(poseTest[0], poseTest[1], poseTest[2] > 0, now);
+    else horseGait?.(stride * 2, pace, !grounded, now);
     if (controlled) {
       // The rider sits in the saddle, turning to swing at whatever is close.
-      avatar.position.copy(carPos).setY(carPos.y + bob + SADDLE);
+      avatar.position.copy(carPos).setY(carPos.y + bob + SADDLE + (poseTest?.[3] ?? 0));
       if (now >= busyUntil) facing = carHeading;
       let turn = facing - avatar.rotation.y;
       turn = Math.atan2(Math.sin(turn), Math.cos(turn));
@@ -2790,6 +2799,7 @@ async function createGame(assets: Assets): Promise<Game> {
       tilt.position.y = 1.1;
       animate(now < cheerUntil ? 'Cheering' : 'Idle_A');
       hero?.update(dt);
+      if (hero) sit(hero.root);
     }
   }
 
@@ -3765,6 +3775,9 @@ async function createGame(assets: Assets): Promise<Game> {
         enemyContext,
         terrain,
         carHeadingNow: () => carHeading,
+        poseHorse: (pose: number[] | null) => {
+          poseTest = pose;
+        },
         setYaw: (yaw: number) => {
           camYaw = yaw;
         },
