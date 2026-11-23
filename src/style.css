@@ -1156,7 +1156,8 @@ body:not(.touch) #action {
 }
 
 /* Skills: one big button each, with stars for how far it has been learned. */
-#skills {
+#skills,
+#rocket-kit {
   position: fixed;
   z-index: 6;
   left: 50%;
@@ -1171,7 +1172,8 @@ body:not(.touch) #action {
   background: rgba(20, 30, 80, 0.8);
 }
 
-#skills[hidden] {
+#skills[hidden],
+#rocket-kit[hidden] {
   display: none;
 }
 
@@ -1183,7 +1185,8 @@ body:not(.touch) #action {
   color: #fff;
 }
 
-#skills button {
+#skills button,
+#rocket-kit button {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1199,11 +1202,19 @@ body:not(.touch) #action {
   font-size: 15px;
 }
 
-#skills button.poor {
+#rocket-kit button span {
+  font-size: 17px;
+  font-weight: 800;
+  color: #1c2a6b;
+}
+
+#skills button.poor,
+#rocket-kit button.poor {
   opacity: 0.8;
 }
 
-#skills button.owned {
+#skills button.owned,
+#rocket-kit button.owned {
   background: #c9f5d2;
 }
 

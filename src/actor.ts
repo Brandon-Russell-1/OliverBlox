@@ -52,6 +52,14 @@ export class Actor {
     if (item) hand.add(item);
   }
 
+  /** Put something (a shield) on the character's left hand. */
+  holdLeft(item: THREE.Object3D | null): void {
+    const hand = this.root.getObjectByName('handslotl');
+    if (!hand) return;
+    hand.clear();
+    if (item) hand.add(item);
+  }
+
   /** Put a hat on the character's head, replacing any other. */
   wear(hat: THREE.Object3D | null): void {
     const head = this.root.getObjectByName('head');

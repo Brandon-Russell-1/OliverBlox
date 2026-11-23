@@ -54,6 +54,8 @@ export const BUILDINGS = [
   // Smaller things that make a place look lived in. They share the buildings' texture, so they cost nothing extra to draw.
   ...['barrel', 'crate_A_big', 'crate_B_small', 'crate_long_A', 'sack', 'haybale', 'wheelbarrow', 'weaponrack', 'target', 'flag_red', 'flag_blue', 'tent', 'trough', 'bucket_water'],
   ...['resource_lumber', 'resource_stone', 'cannonball_pallet', 'boat', 'boatrack', 'pallet', 'trees_A_cut', 'cart', 'cart_merchant', 'horse_A', 'catapult_red_full', 'cannon_red_full', 'banner_red_full', 'banner_blue_full'],
+  // The castle at the head of a city.
+  'building_castle_blue',
 ];
 export const FORT_FIRST = 11;
 
@@ -62,7 +64,7 @@ const ROCKS = ['Rock_1_A', 'Rock_1_H', 'Rock_2_A', 'Rock_2_E', 'Rock_3_A', 'Rock
 const BUSHES = ['Bush_1_A', 'Bush_2_A', 'Bush_3_A', 'Bush_4_A'];
 const GRASS = ['Grass_1_A', 'Grass_1_B', 'Grass_2_A', 'Grass_2_B'];
 const ANIMS = ['MovementBasic', 'MovementAdvanced', 'General', 'Simulation', 'CombatMelee'];
-export const PETS = ['dog', 'cat', 'bunny', 'cow', 'deer', 'fox', 'pig', 'chick'];
+export const PETS = ['dog', 'cat', 'bunny', 'cow', 'deer', 'fox', 'pig', 'chick', 'elephant', 'giraffe', 'lion', 'tiger', 'panda', 'monkey', 'koala', 'penguin', 'polar', 'beaver', 'crab', 'parrot'];
 const ENEMIES = ['Skeleton_Minion', 'Skeleton_Warrior', 'Skeleton_Mage', 'Skeleton_Rogue'];
 
 /** Swap the loader's physically based materials for cheap ones that suit the art and tablets. */

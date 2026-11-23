@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { AnimatedModel } from './assets';
+import { PETS, type AnimatedModel } from './assets';
 import { groundAt, SEA_LEVEL } from './terrain';
 
 export interface Animal {
@@ -14,7 +14,10 @@ export interface Animal {
   timer: number;
 }
 
-const MAX_ANIMALS = 8;
+const MAX_ANIMALS = 10;
+/** Animals that only live in the cold, high places, and ones that only live by the water. */
+const COLD = ['penguin', 'polar'].map((n) => PETS.indexOf(n));
+const SHORE = ['crab', 'beaver'].map((n) => PETS.indexOf(n));
 const SPEED = 1.6;
 
 function turnToward(root: THREE.Object3D, heading: number, rate: number): void {
@@ -39,10 +42,13 @@ export class Animals {
     const x = player.x + Math.cos(angle) * dist;
     const z = player.z + Math.sin(angle) * dist;
     const y = groundAt(x, z);
-    // Land animals only: not in the sea and not up in the snow.
-    if (y < 1 || y > 40) return;
-
-    const species = Math.floor(Math.random() * this.models.length);
+    // Land animals only: not in the sea. Each kind keeps to where it belongs.
+    if (y < 0.6 || y > 70) return;
+    const cold = y > 30;
+    const shore = y < 2.2;
+    const fits = this.models.map((_, i) => i).filter((i) => (cold ? COLD.includes(i) : shore ? SHORE.includes(i) : !COLD.includes(i) && !SHORE.includes(i)));
+    if (fits.length === 0) return;
+    const species = fits[Math.floor(Math.random() * fits.length)];
     const model = this.models[species];
     const root = model.scene.clone(true);
     root.position.set(x, y, z);

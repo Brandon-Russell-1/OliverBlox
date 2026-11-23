@@ -20,7 +20,10 @@ import { loadSettings, saveSettings, addPlayTime, minutesToday } from './setting
 import { makeStar } from './models';
 import { makeHat } from './hats';
 import { themeFor } from './places';
-import { rigHorse, sit, type Gait } from './horse';
+import { Life } from './life';
+import { BRUTE, GOLDEN } from './combat';
+import { rigHorse, sit, swimStroke, raiseShield, makeShield, type Gait } from './horse';
+import { Moon, Rocket, MOON, ROCKET_PARTS, moonHeight } from './space';
 import { Buddies, BUDDIES, BUDDY_GOALS } from './buddies';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio, setRain, thunder, footstep, setAmbience, type Surface } from './audio';
@@ -139,6 +142,9 @@ interface Save {
   fortTimes?: Record<string, number>;
   /** When the coins in each building were last found: they are put back later. */
   looted?: Record<string, number>;
+  /** How many pieces of the rocket are built, and when the moon's crystals were last gathered. */
+  rocket?: number;
+  moonAt?: number;
   /** Vehicles unlocked in the garage. */
   vehicles?: string[];
   /** Furniture bought for the house. */
@@ -416,6 +422,8 @@ function updateWeather(dt: number, sheltered: boolean): void {
 
 /** True while the hero is down in a dungeon: no sky, no sun, only his torch. */
 let underground = false;
+/** True while he is on the moon: a black sky full of stars and a hard white sun. */
+let onMoon = false;
 /** Starts in the morning. */
 let dayClock = 40;
 /** 0 in full daylight, 1 in the middle of the night. */
@@ -445,6 +453,16 @@ function updateDay(dt: number): void {
     fog.far = 48;
     sun.intensity = 0.12;
     hemi.intensity = 0.4;
+  } else if (onMoon) {
+    night = 1;
+    skyUniforms.top.value.setHex(0x000004);
+    skyUniforms.bottom.value.setHex(0x05060c);
+    fog.color.setHex(0x05060c);
+    fog.near = 120;
+    fog.far = 330;
+    sun.color.setHex(0xffffff);
+    sun.intensity = 2.3;
+    hemi.intensity = 0.55;
   } else {
     fog.near = fogNear;
     fog.far = fogFar;
@@ -545,6 +563,11 @@ const skills: Record<string, number> = { spin: 0, speed: 0, jump: 0, magic: 0, h
 for (const s of SKILLS) skills[s.key] = Math.min(SKILL_MAX, Math.max(0, Math.floor(save?.skills?.[s.key] ?? 0)));
 /** True while he is on horseback: unlike in a car he can be seen, can fight and can be hit. */
 let onHorse = false;
+/** After armor takes a blow, the shield stays up until this time. */
+let blockUntil = 0;
+/** For testing: hold the shield arm at this height, and turn the shield this way in the hand. */
+let blockTest: number | null = null;
+const shieldTurn = [0, 0, Math.PI / 2];
 const quests = new Quests(save?.quests);
 const clearedForts = new Set<string>(save?.forts ?? []);
 const fortTimes: Record<string, number> = { ...(save?.fortTimes ?? {}) };
@@ -566,8 +589,14 @@ const ITEMS = [
   { key: 'fish', icon: '🐟', price: 2 },
   { key: 'bone', icon: '🦴', price: 1 },
   { key: 'gem', icon: '💎', price: 6 },
+  { key: 'rock', icon: '🌑', price: 8 },
 ];
-const bag: Record<string, number> = { fish: 0, bone: 0, gem: 0, ...save?.bag };
+const bag: Record<string, number> = { fish: 0, bone: 0, gem: 0, rock: 0, ...save?.bag };
+let rocketParts = Math.min(ROCKET_PARTS.length, save?.rocket ?? 0);
+let moonAt = save?.moonAt ?? 0;
+/** Where the rocket is built and launched: beside the runway. */
+const PAD = { x: AIRSTRIP.x - AIRSTRIP.halfLength + 30, z: AIRSTRIP.z + 6.5 };
+const ROCKET_PRICE = 12;
 let guideStep = save?.gv === 2 ? (save.guide ?? 0) : 0;
 let homeSeen = save?.homeSeen ?? false;
 let kills = save?.kills ?? 0;
@@ -837,6 +866,8 @@ function saveNow(): void {
     forts: [...clearedForts],
     fortTimes,
     looted,
+    rocket: rocketParts,
+    moonAt,
     vehicles: [...ownedVehicles],
     furniture: [...furniture],
     hats: [...hatsOwned],
@@ -1041,6 +1072,10 @@ async function createGame(assets: Assets): Promise<Game> {
   // ---- hats ----
   function wearHat(): void {
     hero?.wear(hat ? makeHat(hat) : null);
+    // Armor shows as a shield on his other arm.
+    const worn = armor > 0 ? makeShield(armor) : null;
+    if (worn) worn.rotation.set(shieldTurn[0], shieldTurn[1], shieldTurn[2]);
+    hero?.holdLeft(worn);
   }
   onToolChange = equip;
 
@@ -1196,7 +1231,9 @@ async function createGame(assets: Assets): Promise<Game> {
     // The cottage has its own painted door, so the extra one stays hidden.
     frontDoor.visible = false;
     let near = false;
-    if (inside) {
+    if (onMoon) {
+      // No doors on the moon.
+    } else if (inside) {
       // Indoors: the way out is the door in the far wall.
       const dz = ROOM.z + ROOM.halfZ - player.pos.z;
       near = dz < 4.5 && Math.abs(player.pos.x - ROOM.x) < 3;
@@ -1304,6 +1341,10 @@ async function createGame(assets: Assets): Promise<Game> {
   }
   function goOutside(): void {
     if (!inside) return;
+    if (onMoon) {
+      onMoon = false;
+      moon.show(false);
+    }
     player.pos.copy(inside);
     player.pos.y = groundAt(player.pos.x, player.pos.z);
     // Facing away from the house, as if he had just walked out.
@@ -1664,7 +1705,7 @@ async function createGame(assets: Assets): Promise<Game> {
     const models = await Promise.all(locals.map((def) => loadModel(`char/${def.model}.glb`)));
     if (token !== villageToken) return;
     if (started) {
-      toast(`🏠 ${villageName(v)}`);
+      if (!onMoon) toast(`${v.city ? '🏙️' : '🏠'} ${villageName(v)}`);
       speak(`Welcome to ${villageName(v)}!`);
     }
     locals.forEach((def, i) => {
@@ -1830,7 +1871,7 @@ async function createGame(assets: Assets): Promise<Game> {
     { icon: '🪓', price: 10, owned: () => swordLevel >= 1, buy: () => { swordLevel = 1; void loadSword(1); } },
     { icon: '⚔️', price: 30, owned: () => swordLevel >= 2, buy: () => { swordLevel = 2; void loadSword(2); } },
     { icon: '❤️', get price() { return 15 + extraHearts * 5; }, owned: () => extraHearts >= MAX_EXTRA_HEARTS, buy: () => { extraHearts++; maxHearts++; hearts = maxHearts; showHearts(); speak(`Now you have ${maxHearts} hearts!`); } },
-    { icon: '🛡️', get price() { return 20 + armor * 15; }, owned: () => armor >= MAX_ARMOR, buy: () => { armor++; shield = armor; showHearts(); speak('Armor! A shield takes a hit for you.'); } },
+    { icon: '🛡️', get price() { return 20 + armor * 15; }, owned: () => armor >= MAX_ARMOR, buy: () => { armor++; shield = armor; showHearts(); wearHat(); speak('Armor! A shield takes a hit for you.'); } },
     { icon: '👟', price: 20, owned: () => boots, buy: () => { boots = true; } },
     hatItem('🥳', 'party', 8),
     hatItem('🎩', 'top', 12),
@@ -1924,7 +1965,11 @@ async function createGame(assets: Assets): Promise<Game> {
   input.onAction = () => {
     if (!started) return;
     const lift = peers.driverNear(player.pos, 6);
-    if (riding) hopOut();
+    if (flight) return;
+    const ship = rocketIcon();
+    if (ship === '🔧') openRocketKit();
+    else if (ship === '🚀') launch(onMoon ? 'earth' : 'moon');
+    else if (riding) hopOut();
     else if (fishing) reel();
     else if (driving) exitVehicle();
     else if (holeNear) useHole(holeNear);
@@ -2040,6 +2085,149 @@ async function createGame(assets: Assets): Promise<Game> {
     garageEl.hidden = !garageEl.hidden;
   });
 
+  const life = new Life(scene, (x, z) => {
+    for (let i = 0; i < 2; i++) effects.ripple(x, SEA_LEVEL + 0.05, z, 0.6 + i * 0.5);
+  });
+
+  // ---- the rocket, built piece by piece beside the runway, and the moon it flies to ----
+  const rocket = new Rocket(rocketParts);
+  rocket.group.position.set(PAD.x, groundAt(PAD.x, PAD.z), PAD.z);
+  scene.add(rocket.group);
+  // A round launch pad under it.
+  const padMesh = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 6, 0.3, 20), new THREE.MeshLambertMaterial({ color: 0x70757f }));
+  padMesh.position.set(PAD.x, groundAt(PAD.x, PAD.z) + 0.05, PAD.z);
+  padMesh.receiveShadow = true;
+  scene.add(padMesh);
+  const moon = new Moon(scene);
+  /** A launch in progress: counting down, then climbing, then arriving. */
+  let flight: { t: number; to: 'moon' | 'earth'; from: THREE.Vector3; ship: Rocket; gone: boolean } | null = null;
+  const rocketKit = $('rocket-kit');
+  /** What the yellow button offers near a rocket: build it, fly it, or nothing. */
+  function rocketIcon(): string {
+    if (flight || driving || riding) return '';
+    if (onMoon) return Math.hypot(player.pos.x - MOON.x, player.pos.z - MOON.z) < 9 ? '🚀' : '';
+    if (inside || underground || Math.hypot(player.pos.x - PAD.x, player.pos.z - PAD.z) > 9) return '';
+    return rocketParts < ROCKET_PARTS.length ? '🔧' : '🚀';
+  }
+  function renderRocketKit(): void {
+    rocketKit.replaceChildren(
+      ...ROCKET_PARTS.map((part, i) => {
+        const b = document.createElement('button');
+        const built = i < rocketParts;
+        const next = i === rocketParts;
+        b.className = built ? 'owned' : !next || coins < ROCKET_PRICE ? 'poor' : '';
+        const label = document.createElement('span');
+        label.textContent = built ? '✅' : `🪙 ${ROCKET_PRICE}`;
+        b.append(part.icon, label);
+        b.addEventListener('click', () => {
+          if (i !== rocketParts) {
+            speak(built ? part.say : 'Build the pieces in order, from the bottom up.');
+            sfx.remove();
+            return;
+          }
+          if (coins < ROCKET_PRICE) {
+            speak(`You need ${ROCKET_PRICE} coins for this piece.`);
+            sfx.remove();
+            return;
+          }
+          coins -= ROCKET_PRICE;
+          rocketParts++;
+          rocket.setParts(rocketParts);
+          showCoins();
+          sfx.win();
+          speak(part.say);
+          dirty = true;
+          renderRocketKit();
+          if (rocketParts >= ROCKET_PARTS.length) {
+            rocketKit.hidden = true;
+            cheerUntil = now + 3;
+            toast('🚀 ✅');
+          }
+        });
+        return b;
+      }),
+    );
+  }
+  function openRocketKit(): void {
+    renderRocketKit();
+    rocketKit.hidden = !rocketKit.hidden;
+    if (!rocketKit.hidden && rocketParts === 0) speak('Let us build a rocket! Tap the first piece.');
+  }
+  function launch(to: 'moon' | 'earth'): void {
+    if (flight) return;
+    setFlying(false);
+    setCrawling(false);
+    const ship = to === 'moon' ? rocket : moon.rocket;
+    const from = to === 'moon' ? rocket.group.position.clone() : moon.pad;
+    flight = { t: 0, to, from, ship, gone: false };
+    avatar.visible = false;
+    rocketKit.hidden = true;
+    player.pos.copy(from);
+    player.vel.set(0, 0, 0);
+    speak('Three. Two. One. Blast off!', { pitch: 1, rate: 0.8 });
+  }
+  function updateFlight(dt: number): void {
+    if (!flight) return;
+    const f = flight;
+    f.t += dt;
+    const burn = f.t - 2.8;
+    const up = burn > 0 ? 0.5 * 9 * burn * burn : 0;
+    f.ship.burn(f.t > 2.2, now);
+    // A rumble on the pad, then up it goes, faster and faster. The moon's rocket is placed within the moon.
+    const shake = burn > 0 ? 0 : Math.sin(now * 60) * 0.05 * Math.max(0, f.t - 1.5);
+    if (f.to === 'moon') f.ship.group.position.set(f.from.x + shake, f.from.y + up, f.from.z);
+    else f.ship.group.position.set(shake, up, 0);
+    player.pos.set(f.from.x, f.from.y + up * 0.8 + 3, f.from.z);
+    if (f.t > 2.2 && burn < 1.2) effects.dust(f.from.x + (Math.random() - 0.5) * 6, f.from.y + 0.3, f.from.z + (Math.random() - 0.5) * 6, 0xdddddd, 2.2);
+    if (burn > 3.4 && !f.gone) {
+      f.gone = true;
+      travel(() => {
+        f.ship.burn(false, 0);
+        if (f.to === 'moon') {
+          f.ship.group.position.copy(f.from);
+          // Remember where to come back to, a few steps from the pad.
+          inside = new THREE.Vector3(PAD.x + 7, 0, PAD.z + 5);
+          placeIn = null;
+          visiting = null;
+          onMoon = true;
+          moon.show(true);
+          if (Date.now() - moonAt > RESTOCK_MS) moon.restock();
+          player.pos.set(MOON.x + 6, moonHeight(MOON.x + 6, MOON.z + 6), MOON.z + 6);
+          mapEl.hidden = true;
+          attackEl.hidden = true;
+          speak('You are on the moon! Jump and see how high you go.');
+        } else {
+          f.ship.group.position.set(0, 0, 0);
+          goOutside();
+          speak('Home again! What a trip.');
+        }
+        player.vel.set(0, 0, 0);
+        avatar.visible = true;
+        camTarget.copy(player.pos);
+        flight = null;
+        dirty = true;
+      });
+    }
+  }
+  /** Things that happen on the moon whether or not he is moving. */
+  function updateSpace(dt: number): void {
+    if (!onMoon) return;
+    const said = moon.update(dt, player.pos);
+    if (said) speak(said, { pitch: 1.6, rate: 1.05 });
+    const found = flight ? 0 : moon.collect(player.pos);
+    if (found > 0) {
+      bag.rock += found;
+      bonusStars += found;
+      moonAt = Date.now();
+      showStars(true);
+      showBag();
+      sfx.star();
+      toast(`🌑 +${found}`);
+      if (moon.crystalsLeft === 0) speak('You found every moon crystal! Sell them at the market.');
+      dirty = true;
+    }
+  }
+
   // ---- skills: a point for every few stars, spent on getting better at something ----
   const skillsEl = $('skills');
   const skillChip = $('skill-chip');
@@ -2128,6 +2316,7 @@ async function createGame(assets: Assets): Promise<Game> {
     if (shield > 0) {
       // Armor takes the blow: no heart lost, and only a small shove.
       shield--;
+      blockUntil = now + 0.7;
       sfx.bonk();
       knock.set(Math.sin(away) * 4, 0, Math.cos(away) * 4);
       effects.dust(player.pos.x, player.pos.y + 1.2, player.pos.z, 0xcfd8e6, 0.9);
@@ -2190,10 +2379,19 @@ async function createGame(assets: Assets): Promise<Game> {
       if (targetId === selfId) hurt(from);
       else net.send({ t: 'hit', to: targetId, x: from.x, z: from.z });
     },
-    onDefeat(_at, boss) {
+    onDefeat(_at, boss, kind) {
       const fort = boss ? bossFort : '';
       if (boss) bossFort = '';
       reward(boss, fort);
+      // The unusual ones pay extra.
+      const extra = kind === GOLDEN ? 10 : kind === BRUTE ? 3 : 0;
+      if (extra > 0) {
+        coins += extra;
+        showCoins();
+        sfx.coin();
+        toast(`🪙 +${extra}`);
+        if (kind === GOLDEN) speak('A golden skeleton! Ten coins!');
+      }
       net.send({ t: 'won', boss, fort });
     },
     collide(pos, radius) {
@@ -2606,7 +2804,29 @@ async function createGame(assets: Assets): Promise<Game> {
     const ground = groundAt(pos.x, pos.z);
     const before = pos.clone();
 
-    if (inside) {
+    if (onMoon) {
+      // The moon: everything is light, so jumps are high and slow.
+      const speed = input.run ? RUN_SPEED : WALK_SPEED;
+      const was = player.onGround;
+      vel.x = mx * speed;
+      vel.z = mz * speed;
+      if (input.jump && was) {
+        vel.y = 7.6;
+        sfx.jump();
+      }
+      vel.y -= 5.2 * dt;
+      pos.addScaledVector(vel, dt);
+      moon.clamp(pos);
+      const g = moonHeight(pos.x, pos.z);
+      if (pos.y <= g || (was && vel.y <= 0 && pos.y - g < 0.6)) {
+        pos.y = g;
+        vel.y = 0;
+        player.onGround = true;
+      } else {
+        player.onGround = false;
+      }
+      swimming = false;
+    } else if (inside) {
       // Indoors: a flat floor and four walls.
       vel.set(mx * WALK_SPEED, 0, mz * WALK_SPEED);
       pos.addScaledVector(vel, dt);
@@ -2678,6 +2898,8 @@ async function createGame(assets: Assets): Promise<Game> {
     tilt.rotation.x = tiltNow;
     tilt.position.y = 1.1 + liftNow;
     hero?.update(dt);
+    if (hero && swimming && moving) swimStroke(hero.root, now);
+    if (hero && armor > 0) raiseShield(hero.root, blockTest ?? THREE.MathUtils.smoothstep(blockUntil - now, 0, 0.25));
   }
 
   let carPitch = 0;
@@ -2896,14 +3118,14 @@ async function createGame(assets: Assets): Promise<Game> {
     camTarget.lerp(camWant, Math.min(1, 12 * dt));
     // Close up on the hero while choosing one on the start screen.
     // Pulled in close underground, where walls would otherwise get between the camera and the hero.
-    const dist = !started ? 6.5 : inside ? 7 : underground ? Math.min(camDist, 6.5) : driving ? camDist + 4 : camDist;
+    const dist = !started ? 6.5 : flight ? 26 : onMoon ? camDist + 2 : inside ? 7 : underground ? Math.min(camDist, 6.5) : driving ? camDist + 4 : camDist;
     const pitch = started ? camPitch : 0.12;
     camOffset.set(Math.sin(camYaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(camYaw) * Math.cos(pitch));
     camera.position.copy(camTarget).addScaledVector(camOffset, dist);
     // Never let the camera sink into a hillside or under the sea.
-    const floor = Math.max(groundAt(camera.position.x, camera.position.z), SEA_LEVEL) + 0.6;
+    const floor = onMoon ? moonHeight(camera.position.x, camera.position.z) + 0.6 : Math.max(groundAt(camera.position.x, camera.position.z), SEA_LEVEL) + 0.6;
     if (camera.position.y < floor) camera.position.y = floor;
-    if (inside) home.clamp(camera.position, 0.5, 0.6);
+    if (inside && !onMoon) home.clamp(camera.position, 0.5, 0.6);
     if (dungeonNow) {
       // Underground the camera stays inside the outer walls and under the roof.
       const edge = DUNGEON_HALF - 1;
@@ -3402,6 +3624,7 @@ async function createGame(assets: Assets): Promise<Game> {
   let stepsHeard = 0;
   /** What his feet are on, for the sound of his steps. */
   function surfaceUnder(): Surface {
+    if (onMoon) return 'stone';
     if (inside) return 'wood';
     if (underground) return 'stone';
     const ground = groundAt(player.pos.x, player.pos.z);
@@ -3426,7 +3649,7 @@ async function createGame(assets: Assets): Promise<Game> {
     u.time.value = now;
     u.night.value = night;
     u.cover.value = 0.25 + 0.75 * wet;
-    u.detail.value = quality < 2 && !underground ? 1 : 0;
+    u.detail.value = quality < 2 && !underground && !onMoon ? 1 : 0;
     clouds.visible = quality >= 2;
     // Warm light when the sun is low.
     if (!underground) sun.color.lerp(SKY.dusk, low * 0.35 * (1 - night));
@@ -3748,10 +3971,11 @@ async function createGame(assets: Assets): Promise<Game> {
     }
     for (const v of places) {
       const won = v.kind === 'fort' ? fortHeld(v.id) : clearedForts.has(v.id);
-      const icon = v.kind === 'village' ? '🏠' : v.kind === 'cave' ? '🕳️' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
+      const icon = v.kind === 'village' ? (v.city ? '🏙️' : '🏠') : v.kind === 'cave' ? '🕳️' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
       icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
     }
     for (const s of sitesNear(who.x, who.z, 280)) if (s.site) icons.push({ x: s.x, z: s.z, icon: SITE_ICONS[s.site] });
+    icons.push({ x: PAD.x, z: PAD.z, icon: '🚀', pin: true });
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
     if (guideTarget) icons.push({ x: guideTarget.x, z: guideTarget.z, icon: '🎯', pin: true });
     for (const p of buddies.positions()) icons.push({ x: p.x, z: p.z, icon: '🤖' });
@@ -3775,6 +3999,21 @@ async function createGame(assets: Assets): Promise<Game> {
         enemyContext,
         terrain,
         carHeadingNow: () => carHeading,
+        PAD,
+        MOON,
+        setBlock: (v: number | null, turn?: number[]) => {
+          blockTest = v;
+          if (turn) shieldTurn.splice(0, 3, ...turn);
+          wearHat();
+        },
+        setArmor: (n: number) => {
+          armor = n;
+          shield = n;
+          showHearts();
+          wearHat();
+        },
+        moonObj: moon,
+        space: () => ({ parts: rocketParts, onMoon, flight: flight ? +flight.t.toFixed(1) : null, crystals: moon.crystalsLeft, rock: bag.rock }),
         poseHorse: (pose: number[] | null) => {
           poseTest = pose;
         },
@@ -3903,10 +4142,14 @@ async function createGame(assets: Assets): Promise<Game> {
             hopOut();
           }
           updateVehicle(dt, false);
+        } else if (flight) {
+          updateFlight(dt);
+          updateVehicle(dt, false);
         } else {
           updatePlayer(dt);
           updateVehicle(dt, false);
         }
+        updateSpace(dt);
         wasJump = input.jump;
         updateCombat(dt);
 
@@ -3947,7 +4190,7 @@ async function createGame(assets: Assets): Promise<Game> {
             r: riding ? 1 : 0,
             k: hat,
             w: tool === SWORD ? swordLevel : tool === STAFF ? 3 : -1,
-            i: inside ? (placeIn?.id ?? visiting ?? selfId) : '',
+            i: onMoon ? 'moon' : inside ? (placeIn?.id ?? visiting ?? selfId) : '',
             q: performance.now() - input.lastActivity > AWAY_MS ? 1 : 0,
           };
           const packed = JSON.stringify(state);
@@ -3977,6 +4220,8 @@ async function createGame(assets: Assets): Promise<Game> {
                 ? vehicleKind === 'plane'
                   ? '🛬'
                   : '🚶'
+                : rocketIcon()
+                  ? rocketIcon()
                 : holeNear
                   ? holeNear.kind === 'cave'
                     ? '🕳️'
@@ -4027,9 +4272,11 @@ async function createGame(assets: Assets): Promise<Game> {
       const who = driving ? carPos : player.pos;
       terrain.view = viewChunks;
       terrain.update(who.x, who.z, 2);
+      terrain.animate(now);
+      life.update(dt, who, night, inside === null && !underground);
       animals.update(dt, who);
       pet?.update(dt, inside ?? who);
-      peers.room = inside ? (placeIn?.id ?? visiting ?? selfId) : '';
+      peers.room = onMoon ? 'moon' : inside ? (placeIn?.id ?? visiting ?? selfId) : '';
       peers.update(dt);
       if (selfBubble.visible && now > emoteUntil) selfBubble.visible = false;
       if (goalStar.visible) goalStar.rotation.y = now * 2;

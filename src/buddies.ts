@@ -13,6 +13,9 @@ export const BUDDIES = [
   { id: 'nova', name: 'Nova', model: 'Mage', likes: 'stars' as BuddyGoal },
   { id: 'rex', name: 'Rex', model: 'Knight', likes: 'fight' as BuddyGoal },
   { id: 'zip', name: 'Zip', model: 'Ranger', likes: 'explore' as BuddyGoal },
+  { id: 'luna', name: 'Luna', model: 'Druid', likes: 'fish' as BuddyGoal },
+  { id: 'max', name: 'Max', model: 'Barbarian', likes: 'fight' as BuddyGoal },
+  { id: 'pip', name: 'Pip', model: 'Rogue', likes: 'stars' as BuddyGoal },
 ];
 
 /** What the friends need from the rest of the game. */

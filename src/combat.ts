@@ -14,6 +14,9 @@ interface Kind {
   reach: number;
   ranged: boolean;
   boss: boolean;
+  /** A colour wash over the model, and how see-through it is, for the unusual ones. */
+  tint?: number;
+  opacity?: number;
 }
 
 const KINDS: Kind[] = [
@@ -27,7 +30,19 @@ const KINDS: Kind[] = [
   { model: 3, hp: 2, speed: 5, scale: 1, reach: 2.3, ranged: false, boss: false },
   // The giant skeleton that guards a fort.
   { model: 1, hp: 14, speed: 3.3, scale: 2.3, reach: 4.4, ranged: false, boss: true },
+  // Brute: a big, slow captain who takes a lot of bonking.
+  { model: 1, hp: 8, speed: 3, scale: 1.5, reach: 3.1, ranged: false, boss: false, tint: 0xd9a066 },
+  // Ghost: pale and see-through, quick, and only out at night.
+  { model: 2, hp: 2, speed: 4.7, scale: 1.05, reach: 2.3, ranged: false, boss: false, tint: 0x9fe8ff, opacity: 0.55 },
+  // Golden skeleton: rare and fast, and worth a pile of coins.
+  { model: 0, hp: 3, speed: 5.6, scale: 0.9, reach: 2.3, ranged: false, boss: false, tint: 0xffc928 },
+  // Frost mage: throws its orbs from further away.
+  { model: 2, hp: 3, speed: 3.4, scale: 1.15, reach: 16, ranged: true, boss: false, tint: 0x6aa8ff },
 ];
+export const BRUTE = 5;
+export const GHOST = 6;
+export const GOLDEN = 7;
+const FROST = 8;
 const WARRIOR = 1;
 const MAGE = 2;
 const ROGUE = 3;
@@ -93,7 +108,7 @@ export interface EnemyContext {
   isSafe(x: number, z: number): boolean;
   /** A skeleton's blow landed on this target. */
   onHit(targetId: string, from: { x: number; z: number }): void;
-  onDefeat(at: THREE.Vector3, boss: boolean): void;
+  onDefeat(at: THREE.Vector3, boss: boolean, kind: number): void;
   /** Push a skeleton out of anything solid: trees, boulders, buildings and walls. */
   collide(pos: THREE.Vector3, radius: number): void;
   /** When someone else runs the skeletons: tell them we hit one. */
@@ -137,6 +152,21 @@ export class Enemies {
     const actor = new Actor(this.models[kind.model], this.clips, ANIMS);
     actor.root.position.set(x, groundAt(x, z), z);
     actor.root.scale.setScalar(kind.scale);
+    if (kind.tint !== undefined) {
+      const tint = new THREE.Color(kind.tint);
+      actor.root.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        // Its own copy of the material, so the ordinary skeletons keep their colour.
+        const m = (mesh.material as THREE.MeshLambertMaterial).clone();
+        m.color.lerp(tint, 0.75);
+        if (kind.opacity !== undefined) {
+          m.transparent = true;
+          m.opacity = kind.opacity;
+        }
+        mesh.material = m;
+      });
+    }
     actor.play('Idle_A');
     this.scene.add(actor.root);
     const e: Enemy = {
@@ -169,7 +199,7 @@ export class Enemies {
   spawnGuards(spots: { x: number; z: number }[]): void {
     spots.forEach((s, i) => {
       if (this.list.length >= 13) return;
-      this.add([0, WARRIOR, ROGUE, 0, MAGE, WARRIOR][i % 6], s.x, s.z);
+      this.add([0, WARRIOR, ROGUE, BRUTE, MAGE, WARRIOR][i % 6], s.x, s.z);
     });
   }
 
@@ -217,7 +247,7 @@ export class Enemies {
       e.state = 'dead';
       e.timer = 2.4;
       e.actor.once('Death_A');
-      ctx.onDefeat(e.pos, e.kind.boss);
+      ctx.onDefeat(e.pos, e.kind.boss, e.kindIndex);
     } else if (!e.kind.boss || e.state !== 'attack') {
       e.state = 'hurt';
       e.timer = e.actor.once('Hit_A', 1.4);
@@ -443,7 +473,25 @@ export class Enemies {
         const z = t.pos.z + Math.sin(angle) * dist;
         if (groundAt(x, z) >= 1 && !ctx.isSafe(x, z)) {
           const roll = Math.random();
-          this.add(roll < 0.4 ? 0 : roll < 0.6 ? WARRIOR : roll < 0.82 ? ROGUE : MAGE, x, z);
+          // At night (when more are allowed out) ghosts join in. A golden one turns up now and then.
+          const dark = this.maxEnemies > 4;
+          const kind =
+            roll < 0.04
+              ? GOLDEN
+              : dark && roll < 0.3
+                ? GHOST
+                : roll < 0.42
+                  ? 0
+                  : roll < 0.58
+                    ? WARRIOR
+                    : roll < 0.74
+                      ? ROGUE
+                      : roll < 0.86
+                        ? MAGE
+                        : roll < 0.94
+                          ? BRUTE
+                          : FROST;
+          this.add(kind, x, z);
         }
       }
     }

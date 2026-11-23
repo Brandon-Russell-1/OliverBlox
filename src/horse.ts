@@ -9,7 +9,7 @@ import * as THREE from 'three';
  */
 
 /** How the horse should look this frame. */
-export type Gait = (stride: number, pace: number, inAir: boolean, time: number) => void;
+export type Gait = (stride: number, pace: number, inAir: boolean, time: number, graze?: number) => void;
 
 interface Part {
   /** The hinge: height and distance along the body, in the model's own units. */
@@ -61,7 +61,7 @@ export function rigHorse(model: THREE.Object3D): Gait {
   }
   const array = position.array as Float32Array;
   let tuck = 0;
-  return (stride, pace, inAir, time) => {
+  return (stride, pace, inAir, time, graze = 0) => {
     // In a jump the front legs fold forward and the hind legs trail.
     tuck += ((inAir ? 1 : 0) - tuck) * 0.2;
     const swing = 0.75 * pace * (1 - tuck);
@@ -70,7 +70,7 @@ export function rigHorse(model: THREE.Object3D): Gait {
     parts[2].angle = Math.sin(stride + Math.PI) * swing + tuck * 0.7;
     parts[3].angle = Math.sin(stride + Math.PI + 0.7) * swing + tuck * 0.7;
     // The head nods with each stride, and breathes gently when standing.
-    parts[4].angle = Math.sin(stride + 1) * 0.1 * pace + Math.sin(time * 1.4) * 0.025;
+    parts[4].angle = Math.sin(stride + 1) * 0.1 * pace + Math.sin(time * 1.4) * 0.025 + graze * (0.8 + Math.sin(time * 5) * 0.05);
     parts[5].angle = -0.25 * pace + Math.sin(stride) * 0.2 * pace + Math.sin(time * 2.1) * 0.08;
     for (const p of parts) {
       for (let k = 0; k < p.index.length; k++) {
@@ -107,4 +107,43 @@ export function sit(root: THREE.Object3D): void {
     if (!bone) continue;
     bone.quaternion.multiply(bend.setFromEuler(turn.set(x, 0, z)));
   }
+}
+
+const pose = (root: THREE.Object3D, name: string, x: number, y: number, z: number): void => {
+  const bone = root.getObjectByName(name);
+  if (bone) bone.quaternion.multiply(bend.setFromEuler(turn.set(x, y, z)));
+};
+
+/** Swimming: the legs flutter and the arms reach in turn, on top of the paddling animation. */
+export function swimStroke(root: THREE.Object3D, time: number): void {
+  const kick = Math.sin(time * 9) * 0.45;
+  pose(root, 'upperlegl', kick, 0, 0);
+  pose(root, 'upperlegr', -kick, 0, 0);
+  pose(root, 'lowerlegl', Math.max(0, -kick) * 0.8, 0, 0);
+  pose(root, 'lowerlegr', Math.max(0, kick) * 0.8, 0, 0);
+  const reach = Math.sin(time * 4.5) * 0.5;
+  pose(root, 'upperarml', reach, 0, 0);
+  pose(root, 'upperarmr', -reach, 0, 0);
+}
+
+/** Holding a shield up in front: `amount` runs from 0 (arm down) to 1 (fully raised). */
+export function raiseShield(root: THREE.Object3D, amount: number): void {
+  pose(root, 'upperarml', -1.25 * amount, 0, -0.5 * amount);
+  pose(root, 'lowerarml', -0.7 * amount, 0, 0);
+}
+
+/** A round shield made from simple shapes; wood, then iron, then gold as armor improves. */
+export function makeShield(level: number): THREE.Object3D {
+  const group = new THREE.Group();
+  const face = [0x9a6a3c, 0xaab4c2, 0xffc928][Math.min(2, Math.max(0, level - 1))];
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.08, 18), new THREE.MeshLambertMaterial({ color: face }));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.06, 6, 18), new THREE.MeshLambertMaterial({ color: 0x4a4f5a }));
+  rim.rotation.x = Math.PI / 2;
+  const boss = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), new THREE.MeshLambertMaterial({ color: 0xe8413c }));
+  boss.position.y = 0.07;
+  group.add(disc, rim, boss);
+  group.traverse((o) => {
+    o.castShadow = true;
+  });
+  return group;
 }

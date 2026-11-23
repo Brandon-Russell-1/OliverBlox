@@ -325,6 +325,7 @@ const TRADER: Theme = { ...MARKET, title: 'Trader', say: "A trader's tent, packe
 /** Which inside goes with which building model. */
 const BY_NAME: [RegExp, Theme][] = [
   [/castle_red/, THRONE],
+  [/castle_blue/, { ...HALL, title: 'Castle', icon: '🏰', say: 'The city castle! The king and queen live here.', coins: 8 }],
   [/_red$/, WAR_TENT],
   [/tent_blue/, TRADER],
   [/home_/, HOUSE],

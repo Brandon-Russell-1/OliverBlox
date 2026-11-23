@@ -1,3 +1,4 @@
+import { rigHorse, type Gait } from './horse';
 import * as THREE from 'three';
 import { fbm, hash2, smoothstep, mulberry32 } from './noise';
 import { BUILDINGS, type PropDef, type PropLibrary } from './assets';
@@ -44,7 +45,7 @@ export interface Building {
 }
 
 /** The kinds of small place found between the villages. */
-export type SiteType = 'camp' | 'farm' | 'ruin' | 'tower' | 'lumber' | 'mine' | 'shrine' | 'merchant' | 'fishing';
+export type SiteType = 'camp' | 'farm' | 'ruin' | 'tower' | 'lumber' | 'mine' | 'shrine' | 'merchant' | 'fishing' | 'hamlet';
 
 export interface Village {
   /** Stable name for this place, used to remember which forts have been won. */
@@ -59,6 +60,8 @@ export interface Village {
   z: number;
   h: number;
   buildings: Building[];
+  /** A village grown big: more streets, a castle and watchtowers. */
+  city?: boolean;
   /** For mazes: where each stretch of wall stands. */
   walls: { x: number; z: number; rot: number }[];
 }
@@ -169,7 +172,7 @@ const VILLAGE_INNER = ['home_B', 'tavern', 'market', 'blacksmith', 'windmill', '
 const VILLAGE_OUTER = ['archeryrange', 'barracks', 'lumbermill', 'workshop', 'watermill', 'shrine', 'watchtower', 'tower_B'].map((n) => `building_${n}_blue`);
 const YARD = ['barrel', 'crate_A_big', 'crate_B_small', 'sack', 'haybale', 'bucket_water', 'crate_long_A'];
 
-function layVillage(lay: Layout, rx: number, rz: number): void {
+function layVillage(lay: Layout, rx: number, rz: number, city = false): void {
   lay.put('building_well_blue', 0, 0, 0, BUILDING_SCALE * 0.6);
   const n = 6 + Math.floor(hash2(rx, rz, 74) * 3);
   const start = Math.floor(lay.roll() * VILLAGE_INNER.length);
@@ -211,6 +214,22 @@ function layVillage(lay: Layout, rx: number, rz: number): void {
     }
   }
   for (let i = 0; i < 4; i++) lay.prop('flag_blue', Math.sin(i * 1.571 + 0.78) * 9, Math.cos(i * 1.571 + 0.78) * 9, i * 1.571);
+  if (!city) return;
+  // A city: a third street of buildings, a castle at its head, watchtowers and banners.
+  const turn = lay.roll() * Math.PI * 2;
+  lay.put('building_castle_blue', Math.sin(turn) * 66, Math.cos(turn) * 66, turn + Math.PI, 9);
+  const street = [...VILLAGE_INNER, ...VILLAGE_OUTER];
+  const from = Math.floor(lay.roll() * street.length);
+  for (let i = 1; i < 10; i++) {
+    const a = turn + (i / 10) * Math.PI * 2;
+    lay.put(street[(from + i * 3) % street.length], Math.sin(a) * 63, Math.cos(a) * 63, a + Math.PI);
+    if (i % 3 === 0) lay.clutter(YARD, Math.sin(a + 0.16) * 56, Math.cos(a + 0.16) * 56, 3, 2.5);
+    if (i % 2 === 0) lay.prop('banner_blue_full', Math.sin(a + 0.3) * 55, Math.cos(a + 0.3) * 55, a + Math.PI);
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = turn + Math.PI / 4 + (i * Math.PI) / 2;
+    lay.put('building_watchtower_blue', Math.sin(a) * 78, Math.cos(a) * 78, a + Math.PI);
+  }
 }
 
 /** A skeleton stronghold: a castle inside a ring of wall, with towers, tents, fires and war machines. */
@@ -247,7 +266,7 @@ function layFort(lay: Layout): void {
 // ---------- the small places between villages ----------
 const SITE_CELL = 140;
 const sites = new Map<string, Village | null>();
-export const SITE_ICONS: Record<SiteType, string> = { camp: '⛺', farm: '🌾', ruin: '🏚️', tower: '🗼', lumber: '🪓', mine: '⛏️', shrine: '⛩️', merchant: '🧺', fishing: '🎣' };
+export const SITE_ICONS: Record<SiteType, string> = { camp: '⛺', farm: '🌾', ruin: '🏚️', tower: '🗼', lumber: '🪓', mine: '⛏️', shrine: '⛩️', merchant: '🧺', fishing: '🎣', hamlet: '🏘️' };
 
 function siteIn(cx: number, cz: number): Village | null {
   const key = `${cx},${cz}`;
@@ -268,9 +287,11 @@ function siteIn(cx: number, cz: number): Village | null {
           ? roll < 0.55
             ? 'mine'
             : 'tower'
-          : roll < 0.27
+          : roll < 0.24
             ? 'camp'
-            : roll < 0.48
+            : roll < 0.36
+              ? 'hamlet'
+              : roll < 0.48
               ? 'farm'
               : roll < 0.6
                 ? 'ruin'
@@ -290,6 +311,18 @@ function siteIn(cx: number, cz: number): Village | null {
 }
 
 function laySite(lay: Layout, type: SiteType): void {
+  if (type === 'hamlet') {
+    // A handful of cottages round a well, too small to be a village.
+    lay.put('building_well_blue', 0, 0, 0, 5).solid = 1.6;
+    lay.put('building_home_B_blue', -11, -4, 1.2, 7);
+    lay.put('building_home_A_blue', 10, -6, -1, 7);
+    lay.put('building_tavern_blue', 2, 12, Math.PI, 7);
+    lay.clutter(['barrel', 'crate_A_big', 'sack', 'haybale', 'bucket_water'], -4, 7, 4, 3);
+    lay.prop('horse_A', 8, 5, 0.8);
+    lay.prop('trough', 11, 4);
+    lay.prop('flag_blue', -3, -9, 0);
+    return;
+  }
   if (type === 'camp') {
     // A skeleton camp: tents round a fire behind a rough fence.
     lay.fire(0, 0);
@@ -436,7 +469,9 @@ function villageIn(rx: number, rz: number): Village | null {
                   : 'cave';
   if (kind) {
     const lay = new Layout(x, z, 0, rx * 131 + rz * 7 + 1);
-    if (kind === 'village') layVillage(lay, rx, rz);
+    // About one village in three, away from home, has grown into a city.
+    const city = kind === 'village' && !home && hash2(rx, rz, 77) < 0.36;
+    if (kind === 'village') layVillage(lay, rx, rz, city);
     else if (kind === 'fort') layFort(lay);
     village = {
       id: key,
@@ -447,6 +482,7 @@ function villageIn(rx: number, rz: number): Village | null {
       buildings: lay.buildings,
       walls: kind === 'maze' ? mazeWalls(x, z, rx * 7919 + rz * 104729 + 17, MAZE_CELLS, true) : [],
       fires: lay.fires,
+      city,
     };
   }
   villages.set(key, village);
@@ -520,7 +556,8 @@ function placedHeight(x: number, z: number): number {
   const h = baseHeight(x, z);
   const v = nearestVillage(x, z);
   if (!v) return siteHeight(x, z, h);
-  const k = 1 - smoothstep(VILLAGE_RADIUS - 8, VILLAGE_RADIUS + 28, Math.hypot(v.x - x, v.z - z));
+  const wide = v.city ? 40 : 0;
+  const k = 1 - smoothstep(VILLAGE_RADIUS - 8 + wide, VILLAGE_RADIUS + 28 + wide, Math.hypot(v.x - x, v.z - z));
   return siteHeight(x, z, h * (1 - k) + v.h * k);
 }
 
@@ -708,6 +745,8 @@ interface Chunk {
   buildings: THREE.Mesh | null;
   walls: THREE.Mesh | null;
   flames: THREE.Mesh | null;
+  /** Horses standing about: each is its own shape so it can lower its head to graze. */
+  horses: { mesh: THREE.Mesh; gait: Gait; phase: number }[];
   colliders: Collider[];
   star: Star | null;
   chest: Star | null;
@@ -756,6 +795,8 @@ export class Terrain {
   readonly stars: Star[] = [];
   readonly chests: Star[] = [];
   /** The scenery that sways in the wind. */
+  private readonly flags = new Set<PropDef>();
+  private horseDef: PropDef | null = null;
   private plants = new Set<PropDef>();
 
   constructor(
@@ -765,16 +806,28 @@ export class Terrain {
     private readonly collected: Set<string>,
   ) {
     for (const def of [...props.trees, ...props.bushes, ...props.grass]) this.plants.add(def);
+    BUILDINGS.forEach((name, i) => {
+      if (/^(flag|banner)_/.test(name)) this.flags.add(props.buildings[i]);
+    });
+    this.horseDef = props.buildings[BUILDINGS.indexOf('horse_A')] ?? null;
     // Trees, bushes and grass lean in the wind: the higher up the plant, the further it moves.
-    props.material.onBeforeCompile = (shader) => {
+    props.material.onBeforeCompile = props.buildingMaterial.onBeforeCompile = (shader) => {
       shader.uniforms.natureTime = NATURE.time;
       shader.uniforms.natureWind = NATURE.wind;
       shader.vertexShader = `attribute float sway;\nuniform float natureTime;\nuniform float natureWind;\n${shader.vertexShader}`.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-        float gust = sin(natureTime * 1.7 + position.x * 0.31 + position.z * 0.23) + 0.5 * sin(natureTime * 2.9 + position.x * 0.83 - position.z * 0.4);
-        transformed.x += sway * gust * natureWind;
-        transformed.z += sway * gust * 0.6 * natureWind;`,
+        if (sway < 0.0) {
+          // Cloth: a wave that runs along the flag, bigger the further from the pole.
+          float flap = sin(natureTime * 6.5 + position.x * 1.6 + position.z * 1.6 + position.y * 0.9) * -sway * (0.7 + 0.3 * natureWind);
+          transformed.x += flap;
+          transformed.z += flap;
+          transformed.y += flap * 0.25;
+        } else {
+          float gust = sin(natureTime * 1.7 + position.x * 0.31 + position.z * 0.23) + 0.5 * sin(natureTime * 2.9 + position.x * 0.83 - position.z * 0.4);
+          transformed.x += sway * gust * natureWind;
+          transformed.z += sway * gust * 0.6 * natureWind;
+        }`,
       );
     };
     // Where the land meets the sea: wet sand, and a line of foam that laps in and out with the waves.
@@ -907,7 +960,7 @@ export class Terrain {
     // Keep the village green clear of trees and boulders.
     const inVillage = (x: number, z: number): boolean =>
       airstripDistance(x, z) < 8 ||
-      (village !== null && Math.hypot(x - village.x, z - village.z) < VILLAGE_RADIUS + (village.kind === 'village' ? 6 : 0)) ||
+      (village !== null && Math.hypot(x - village.x, z - village.z) < VILLAGE_RADIUS + (village.kind === 'village' ? 6 : 0) + (village.city ? 38 : 0)) ||
       smallPlaces.some((s) => Math.hypot(x - s.x, z - s.z) < 21);
     const put = (def: PropDef, x: number, z: number, y: number, targetHeight: number): number => {
       const scale = targetHeight / def.height;
@@ -971,10 +1024,16 @@ export class Terrain {
     // ---- village buildings that stand in this chunk ----
     const built: Placement[] = [];
     const places = village ? [village, ...smallPlaces] : smallPlaces;
+    const horses: Chunk['horses'] = [];
     for (const b of places.flatMap((p) => p.buildings)) {
       if (b.x < ox || b.x >= ox + CHUNK || b.z < oz || b.z >= oz + CHUNK) continue;
       const def = this.props.buildings[b.def];
       const g = groundAt(b.x, b.z);
+      if (def === this.horseDef) {
+        horses.push(this.liveHorse(def, b.x, g, b.z, b.scale, b.rot));
+        colliders.push({ x: b.x, z: b.z, r: 0.9, top: g + 2.4 });
+        continue;
+      }
       // The models' front doors are on their +z side, which this turns to face the middle of the village.
       built.push({ def, x: b.x, y: g - 0.15, z: b.z, scale: b.scale, rot: b.rot });
       const top = g + def.height * b.scale;
@@ -1067,6 +1126,7 @@ export class Terrain {
       buildings: this.bake(built, this.props.buildingMaterial),
       walls: this.bake(walled, WALL_MATERIAL),
       flames: this.bake(flames, FLAME_MATERIAL),
+      horses,
       colliders,
       star,
       chest,
@@ -1087,6 +1147,7 @@ export class Terrain {
       const sin = Math.sin(rot);
       // Rocks and buildings stand firm; plants bend more the taller they are.
       const bend = this.plants.has(def) ? Math.min(0.32, 0.06 + 0.03 * def.height * scale) : 0;
+      const cloth = this.flags.has(def);
       for (let i = 0; i < def.count; i++) {
         const px = def.pos[i * 3];
         const py = def.pos[i * 3 + 1];
@@ -1097,6 +1158,8 @@ export class Terrain {
         pos[o] = x + (px * cos + pz * sin) * scale;
         pos[o + 1] = y + py * scale;
         if (bend > 0) sway[at + i] = bend * Math.pow(Math.max(0, py / def.height), 2);
+        // Flags and banners: the cloth is whatever hangs away from the pole, up high. Negative marks it as cloth.
+        else if (cloth) sway[at + i] = -Math.min(0.3, Math.max(0, Math.hypot(px, pz) - def.radius * 0.12) * scale * 0.22) * (py > def.height * 0.35 ? 1 : 0);
         pos[o + 2] = z + (pz * cos - px * sin) * scale;
         norm[o] = nx * cos + nz * sin;
         norm[o + 1] = def.norm[i * 3 + 1];
@@ -1117,8 +1180,39 @@ export class Terrain {
     return mesh;
   }
 
+  /** A horse of its own, not baked into the scenery, so its head and tail can move. */
+  private liveHorse(def: PropDef, x: number, y: number, z: number, scale: number, rot: number): Chunk['horses'][number] {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(def.pos.slice(), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(def.norm, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(def.uv, 2));
+    geo.setAttribute('sway', new THREE.BufferAttribute(new Float32Array(def.count), 1));
+    const mesh = new THREE.Mesh(geo, this.props.buildingMaterial);
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = rot;
+    mesh.scale.setScalar(scale);
+    mesh.castShadow = true;
+    this.scene.add(mesh);
+    return { mesh, gait: rigHorse(mesh), phase: (x * 0.37 + z * 0.61) % 20 };
+  }
+
+  /** Move the things that move on their own: horses graze, lifting their heads now and then. */
+  animate(time: number): void {
+    for (const c of this.chunks.values()) {
+      for (const h of c.horses) {
+        const t = time + h.phase;
+        const down = Math.min(1, Math.max(0, Math.sin(t * 0.3) * 2.5 + 0.6));
+        h.gait(0, 0, false, t, down * down * (3 - 2 * down));
+      }
+    }
+  }
+
   private unload(c: Chunk): void {
     this.scene.remove(c.ground);
+    for (const h of c.horses) {
+      this.scene.remove(h.mesh);
+      h.mesh.geometry.dispose();
+    }
     c.ground.geometry.dispose();
     for (const mesh of [c.props, c.buildings, c.walls, c.flames]) {
       if (!mesh) continue;
