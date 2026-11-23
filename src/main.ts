@@ -467,7 +467,6 @@ function updateDay(dt: number): void {
     fog.near = fogNear;
     fog.far = fogFar;
   }
-  music.setNight(night > 0.5);
 }
 
 const water = new THREE.Mesh(
@@ -3581,6 +3580,7 @@ async function createGame(assets: Assets): Promise<Game> {
       ),
     );
   }
+  $('map-btn').addEventListener('click', () => miniMap.toggle());
   $('bag-btn').addEventListener('click', () => {
     bagEl.hidden = !bagEl.hidden;
     showBag();
@@ -3617,6 +3617,7 @@ async function createGame(assets: Assets): Promise<Game> {
   const CLOUDS = { day: new THREE.Color(0xffffff), dusk: new THREE.Color(0xffb38a), night: new THREE.Color(0x27304f), storm: new THREE.Color(0x6f7882) };
   const lastWho = new THREE.Vector3();
   let stepIn = 0;
+  let moodIn = 0;
   let puffIn = 0;
   let shore = 0;
   let shoreIn = 0;
@@ -3637,6 +3638,32 @@ async function createGame(assets: Assets): Promise<Game> {
     const outdoors = inside === null && !underground;
     const wet = outdoors ? rain : 0;
     NATURE.time.value = now;
+    // The tune follows the place: danger near skeletons, a market tune in a village, and so on.
+    moodIn -= dt;
+    if (moodIn <= 0) {
+      moodIn = 1;
+      const near = nearestVillage(who.x, who.z);
+      const reach = near ? Math.hypot(near.x - who.x, near.z - who.z) : Infinity;
+      music.setMood(
+        onMoon
+          ? 'moon'
+          : underground
+            ? 'cave'
+            : inside
+              ? 'indoors'
+              : enemies.nearest(who, 32) || (near?.kind === 'fort' && reach < 70 && !fortHeld(near.id))
+                ? 'danger'
+                : near?.kind === 'village' && reach < VILLAGE_RADIUS + (near.city ? 50 : 14)
+                  ? 'village'
+                  : groundAt(who.x, who.z) > 30
+                    ? 'snow'
+                    : shore > 0.45 || (driving && vehicleKind === 'boat')
+                      ? 'sea'
+                      : night > 0.5
+                        ? 'night'
+                        : 'meadow',
+      );
+    }
     NATURE.wind.value = 1 + 1.6 * wet;
     water.position.y = SEA_LEVEL + 0.06 * Math.sin(now * 0.8);
 
@@ -3972,9 +3999,9 @@ async function createGame(assets: Assets): Promise<Game> {
     for (const v of places) {
       const won = v.kind === 'fort' ? fortHeld(v.id) : clearedForts.has(v.id);
       const icon = v.kind === 'village' ? (v.city ? '🏙️' : '🏠') : v.kind === 'cave' ? '🕳️' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
-      icons.push({ x: v.x, z: v.z, icon, pin: v === closest });
+      icons.push({ x: v.x, z: v.z, icon, pin: v === closest, label: v.kind === 'village' ? villageName(v) : undefined });
     }
-    for (const s of sitesNear(who.x, who.z, 280)) if (s.site) icons.push({ x: s.x, z: s.z, icon: SITE_ICONS[s.site] });
+    for (const s of sitesNear(who.x, who.z, miniMap.big ? miniMap.range * 1.45 : 280)) if (s.site) icons.push({ x: s.x, z: s.z, icon: SITE_ICONS[s.site] });
     icons.push({ x: PAD.x, z: PAD.z, icon: '🚀', pin: true });
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
     if (guideTarget) icons.push({ x: guideTarget.x, z: guideTarget.z, icon: '🎯', pin: true });
@@ -4087,6 +4114,8 @@ async function createGame(assets: Assets): Promise<Game> {
           owned: ownedVehicles.size,
           online: net.connected,
           stateSends,
+          mood: music.mood,
+          mapBig: miniMap.big,
           stepsHeard,
           shore: +shore.toFixed(2),
           buddyGoals: BUDDIES.map((b) => `${b.id}:${buddies.goalOf(b.id)}`).join(' '),

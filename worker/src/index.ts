@@ -10,6 +10,8 @@ import { DurableObject } from 'cloudflare:workers';
 
 interface Env {
   ANTHROPIC_API_KEY: string;
+  /** Cloudflare's own models, used only to turn words into speech for tablets with no voice. */
+  AI: Ai;
   /** A passphrase only the family knows, entered once in the game's grown-ups panel. */
   FAMILY_CODE: string;
   /** Comma-separated web addresses allowed to call this Worker. */
@@ -23,6 +25,17 @@ interface Env {
 /** Keeps one player's save. Nothing else is stored, and nothing is read but that save. */
 export class Vault extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
+    // Speech already made is kept here too, one phrase per object, so it is only ever made once.
+    if (request.method === 'POST') {
+      const audio = await request.arrayBuffer();
+      if (audio.byteLength > 600_000) return new Response('too big', { status: 413 });
+      await this.ctx.storage.put('audio', audio);
+      return new Response('ok');
+    }
+    if (new URL(request.url).pathname === '/audio') {
+      const audio = await this.ctx.storage.get<ArrayBuffer>('audio');
+      return audio ? new Response(audio) : new Response('none', { status: 404 });
+    }
     if (request.method === 'PUT') {
       const text = await request.text();
       if (text.length > 600_000) return new Response('too big', { status: 413 });
@@ -33,6 +46,9 @@ export class Vault extends DurableObject<Env> {
     return text ? new Response(text) : new Response('none', { status: 404 });
   }
 }
+
+/** The voices the speech model offers that the game uses. */
+const SPEAKERS = new Set(['luna', 'asteria', 'athena', 'orion', 'zeus']);
 
 const MAX_PLAYERS = 8;
 const MAX_MESSAGE = 400_000;
@@ -276,6 +292,39 @@ export default {
       }
       const stored = await env.VAULT.get(env.VAULT.idFromName(slot[1])).fetch(request);
       return new Response(stored.body, { status: stored.status, headers: cors });
+    }
+
+    // Speech for devices with no voice of their own: POST /say { text, speaker } gives back an MP3.
+    if (request.method === 'POST' && url.pathname === '/say') {
+      if (!allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403, cors);
+      if (!env.FAMILY_CODE || request.headers.get('x-family-code') !== env.FAMILY_CODE) {
+        return json({ error: 'wrong family code' }, 401, cors);
+      }
+      let said: { text?: unknown; speaker?: unknown };
+      try {
+        said = (await request.json()) as { text?: unknown; speaker?: unknown };
+      } catch {
+        return json({ error: 'bad request' }, 400, cors);
+      }
+      const text = typeof said.text === 'string' ? said.text.trim().slice(0, 300) : '';
+      const speaker = typeof said.speaker === 'string' && SPEAKERS.has(said.speaker) ? said.speaker : 'luna';
+      if (!text) return json({ error: 'bad request' }, 400, cors);
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${speaker}|${text}`));
+      const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+      const kept = env.VAULT.get(env.VAULT.idFromName(`say-${hash}`));
+      const audio = { ...cors, 'content-type': 'audio/mpeg' };
+      const before = await kept.fetch('https://vault/audio');
+      if (before.ok) return new Response(before.body, { headers: { ...audio, 'x-voice': 'kept' } });
+      try {
+        const made = await env.AI.run('@cf/deepgram/aura-1', { text, speaker, encoding: 'mp3' } as never, { returnRawResponse: true } as never);
+        const bytes = await (made as unknown as Response).arrayBuffer();
+        if (bytes.byteLength < 200) throw new Error('no audio');
+        await kept.fetch('https://vault/audio', { method: 'POST', body: bytes });
+        return new Response(bytes, { headers: { ...audio, 'x-voice': 'new' } });
+      } catch {
+        // Most likely the day's free allowance is used up. The game goes quiet until tomorrow; nothing is charged.
+        return json({ error: 'no voice just now' }, 503, cors);
+      }
     }
 
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/chat') {

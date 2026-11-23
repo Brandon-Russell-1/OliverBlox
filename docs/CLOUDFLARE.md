@@ -86,6 +86,14 @@ Open a terminal in the project's `worker` folder for all of these.
 - **Change the rules.** Edit the `RULES` text or the character descriptions in `worker/src/index.ts`, then run `npx wrangler deploy`.
 - **Turn it off.** Clear the address in the grown-ups panel on a device, or delete the Worker from the Cloudflare dashboard.
 
+## Voice for tablets without one
+
+Some tablets, Amazon Fire among them, have no speaking voice a web page can use. On those the game sends each line to the helper, which uses Cloudflare's Workers AI (the `@cf/deepgram/aura-1` speech model) to turn it into sound.
+
+- **Setting it up on the tablet:** open the grown-ups panel, fill in the helper's address and family code, and press Save. The voice list will show "Online voice". Press Test to hear it.
+- **Cost:** Workers AI has a free daily allowance (10,000 "neurons", which is roughly 7,000 letters of new speech a day). On the free plan nothing is charged beyond that: new speech simply stops until midnight UTC, and the game goes quiet for lines it has not said before.
+- **Why that is usually enough:** every phrase is made only once. The helper keeps it, and the tablet keeps its own copy, so repeated lines cost nothing. Replies from Claude in chats are new each time and use the allowance fastest.
+
 ## Playing together
 
 The same Worker also runs the rooms for playing together, at no extra cost: it is included in Cloudflare's free plan.

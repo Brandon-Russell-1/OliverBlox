@@ -119,6 +119,104 @@ export function setVoiceName(name: string): void {
   localStorage.setItem(VOICE_KEY, name);
 }
 
+/** Picked in the voice list to have the helper do the talking instead of the device. */
+export const ONLINE_VOICE = '~online';
+const HELPER_KEY = 'oliverblox-ai';
+const heard = new Map<string, AudioBuffer>();
+let talking: AudioBufferSourceNode | null = null;
+let sayTurn = 0;
+/** After the helper says no (out of its free allowance, or unreachable), leave it alone for a while. */
+let onlineRestUntil = 0;
+
+function helper(): { url: string; code: string } | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(HELPER_KEY) ?? '{}') as { url?: string; code?: string };
+    return s.url ? { url: s.url, code: s.code ?? '' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when the helper is set up, so the online voice can work. */
+export function onlineVoiceReady(): boolean {
+  return helper() !== null;
+}
+
+/** Some tablets have no voices of their own. There, or when chosen, the helper makes the speech. */
+function useOnline(): boolean {
+  if (!helper()) return false;
+  return getVoiceName() === ONLINE_VOICE || listVoices().length === 0;
+}
+
+/** Stop whatever is being said. */
+export function stopSpeaking(): void {
+  sayTurn++;
+  try {
+    talking?.stop();
+  } catch {
+    // Already finished.
+  }
+  talking = null;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+}
+
+/** Each character keeps roughly its own kind of voice: high ones lighter, low ones deeper. */
+function speakerFor(pitch: number): string {
+  return pitch >= 1.45 ? 'luna' : pitch >= 1.15 ? 'asteria' : pitch >= 0.9 ? 'athena' : pitch >= 0.72 ? 'orion' : 'zeus';
+}
+
+async function fetchSpeech(text: string, speaker: string): Promise<ArrayBuffer | null> {
+  const h = helper();
+  if (!h || Date.now() < onlineRestUntil) return null;
+  // Anything said once on this device is kept, so it never has to be fetched again.
+  const key = `https://voice.oliverblox/${speaker}/${encodeURIComponent(text)}`;
+  const store = 'caches' in window ? await caches.open('oliverblox-voice').catch(() => null) : null;
+  const kept = await store?.match(key).catch(() => undefined);
+  if (kept) return kept.arrayBuffer();
+  const res = await fetch(`${h.url}/say`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-family-code': h.code },
+    body: JSON.stringify({ text, speaker }),
+  });
+  if (!res.ok) {
+    onlineRestUntil = Date.now() + (res.status === 401 ? 60_000 : 10 * 60_000);
+    return null;
+  }
+  const bytes = await res.arrayBuffer();
+  void store?.put(key, new Response(bytes.slice(0), { headers: { 'content-type': 'audio/mpeg' } })).catch(() => {});
+  return bytes;
+}
+
+async function speakOnline(text: string, style: VoiceStyle): Promise<void> {
+  if (!ctx) return;
+  const turn = ++sayTurn;
+  try {
+    talking?.stop();
+  } catch {
+    // Already finished.
+  }
+  talking = null;
+  const line = text.slice(0, 300);
+  const speaker = speakerFor(style.pitch);
+  const key = `${speaker}|${line}`;
+  let buffer = heard.get(key);
+  if (!buffer) {
+    const bytes = await fetchSpeech(line, speaker);
+    if (!bytes || !ctx) return;
+    buffer = await ctx.decodeAudioData(bytes);
+    if (heard.size > 300) heard.clear();
+    heard.set(key, buffer);
+  }
+  // Something newer was said while this was being fetched: let that one play instead.
+  if (turn !== sayTurn || !ctx) return;
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.playbackRate.value = Math.min(1.35, Math.max(0.8, style.rate * (1 + (style.pitch - 1) * 0.12)));
+  source.connect(ctx.destination);
+  source.start();
+  talking = source;
+}
+
 function chosenVoice(): SpeechSynthesisVoice | null {
   const voices = listVoices();
   return voices.find((v) => v.name === getVoiceName()) ?? voices[0] ?? null;
@@ -126,9 +224,15 @@ function chosenVoice(): SpeechSynthesisVoice | null {
 
 /** Say something out loud. Oliver is an early reader, so the game talks instead of showing text. */
 export function speak(text: string, style: VoiceStyle = BOLT_VOICE): void {
+  if (useOnline()) {
+    speakOnline(text, style).catch(() => {
+      onlineRestUntil = Date.now() + 60_000;
+    });
+    return;
+  }
   if (!('speechSynthesis' in window)) return;
   try {
-    speechSynthesis.cancel();
+    stopSpeaking();
     const u = new SpeechSynthesisUtterance(text);
     const voice = chosenVoice();
     if (voice) {

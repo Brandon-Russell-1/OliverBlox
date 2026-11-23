@@ -682,8 +682,8 @@ body:not(.touch) #fly {
   top: 50%;
   right: auto;
   left: 50%;
-  width: min(74vh, 74vw);
-  height: min(74vh, 74vw);
+  width: min(94vh, 94vw);
+  height: min(94vh, 94vw);
   transform: translate(-50%, -50%);
   border-radius: 28px;
   z-index: 5;

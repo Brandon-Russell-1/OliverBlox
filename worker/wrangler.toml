@@ -10,6 +10,10 @@ ALLOWED_ORIGINS = "https://brandonrussell.io,http://localhost:5173,http://localh
 #   npx wrangler secret put ANTHROPIC_API_KEY
 #   npx wrangler secret put FAMILY_CODE
 
+# Speech for tablets that have no voice of their own. Uses the free daily allowance of Workers AI.
+[ai]
+binding = "AI"
+
 # The relay for playing together. It runs on the free plan.
 [[durable_objects.bindings]]
 name = "ROOMS"

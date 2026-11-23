@@ -1,4 +1,4 @@
-import { speak, sfx, listVoices, getVoiceName, setVoiceName, type VoiceStyle } from './audio';
+import { speak, sfx, listVoices, getVoiceName, setVoiceName, stopSpeaking, ONLINE_VOICE, type VoiceStyle } from './audio';
 import { getPlayerName } from './profile';
 
 /** A character Oliver can talk to. The real personality lives on the server; these are the offline lines. */
@@ -232,7 +232,7 @@ export class Chat {
     } else {
       this.mic.addEventListener('click', () => {
         if (this.busy) return;
-        speechSynthesis?.cancel();
+        stopSpeaking();
         const rec = new Recognition();
         rec.lang = 'en-US';
         this.mic.classList.add('on');
@@ -333,9 +333,12 @@ export function setupParentPanel(onErase: () => void): () => void {
   voice.addEventListener('change', () => setVoiceName(voice.value));
   $('voice-test').addEventListener('click', () => {
     setVoiceName(voice.value);
+    // The online voice needs the helper's address and code, so use whatever is typed in right now.
+    setAiSettings({ url: url.value, code: code.value });
     speak(`Hi ${getPlayerName() || 'there'}! I found three stars. Can you find more?`);
   });
   $('parent-save').addEventListener('click', () => {
+    setVoiceName(voice.value);
     setAiSettings({ url: url.value, code: code.value });
     panel.hidden = true;
   });
@@ -352,8 +355,11 @@ export function setupParentPanel(onErase: () => void): () => void {
     transcript.value = chatLog() || 'No chats yet.';
     // Voices differ on every device, so the list is read fresh each time. Best guesses come first.
     const voices = listVoices();
-    voice.replaceChildren(...voices.map((v) => new Option(`${v.name} (${v.lang})`, v.name)));
-    voice.value = voices.some((v) => v.name === getVoiceName()) ? getVoiceName() : (voices[0]?.name ?? '');
+    // The online voice is for tablets that have none of their own. It works once the AI helper below is filled in.
+    const online = new Option(voices.length === 0 ? 'Online voice (this device has none of its own)' : 'Online voice (uses the AI helper)', ONLINE_VOICE);
+    voice.replaceChildren(...voices.map((v) => new Option(`${v.name} (${v.lang})`, v.name)), online);
+    voice.value = getVoiceName() === ONLINE_VOICE || voices.length === 0 ? ONLINE_VOICE : voices.some((v) => v.name === getVoiceName()) ? getVoiceName() : voices[0].name;
+    voice.disabled = false;
     panel.hidden = false;
   };
 }
