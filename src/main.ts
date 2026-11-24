@@ -2006,6 +2006,7 @@ async function createGame(assets: Assets): Promise<Game> {
     const ship = rocketIcon();
     if (ship === '🔧') openRocketKit();
     else if (ship === '🚀') launch(onMoon ? 'earth' : 'moon');
+    else if (onMoon) return;
     else if (riding) hopOut();
     else if (fishing) reel();
     else if (driving) exitVehicle();
@@ -4406,7 +4407,10 @@ async function createGame(assets: Assets): Promise<Game> {
         if (!shopEl.hidden && nearVillager?.persona !== 'shop') shopEl.hidden = true;
         const talk = nearVillager?.persona === 'shop' ? '🛒' : '💬';
         const fishIcon = fishing && now >= fishing.biteAt ? '❗' : '🎣';
-        const icon = inside
+        // On the moon the only thing to use is the rocket home.
+        const icon = onMoon
+          ? rocketIcon()
+          : inside
           ? ''
           : riding
             ? '🚶'
