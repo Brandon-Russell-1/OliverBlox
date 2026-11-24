@@ -22,7 +22,7 @@ import { makeHat } from './hats';
 import { themeFor } from './places';
 import { Life } from './life';
 import { BRUTE, GOLDEN } from './combat';
-import { rigHorse, sit, swimStroke, raiseShield, makeShield, type Gait } from './horse';
+import { makeHorse, sit, swimStroke, raiseShield, makeShield, type Gait } from './horse';
 import { Moon, Rocket, MOON, ROCKET_PARTS, moonHeight } from './space';
 import { Buddies, BUDDIES, BUDDY_GOALS, PARTY_MAX } from './buddies';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
@@ -42,7 +42,6 @@ const CAR_MAX = 18;
 const BOAT_MAX = 13;
 const VEHICLE_SCALE = 2;
 const HORSE_MAX = 14;
-const HORSE_SCALE = 4.8;
 /** How high above the ground the rider's feet hang. */
 const SADDLE = 1.3;
 /** The most extra hearts and armor the market sells. */
@@ -1126,6 +1125,8 @@ async function createGame(assets: Assets): Promise<Game> {
   /** A doorway on the ground: stepping into it sets off `enter`. */
   function atZone(x: number, z: number, radius: number, enter: () => void): void {
     const d = Math.hypot(x - player.pos.x, z - player.pos.z);
+    // Flying over a doorway is not walking through it.
+    if (flying && inside === null && !underground && player.pos.y > groundAt(x, z) + 2.5) return;
     if (d < radius + 0.8) inAnyZone = true;
     if (d < radius && zonesArmed && !travelling && !driving && !riding) travel(enter);
   }
@@ -1607,6 +1608,8 @@ async function createGame(assets: Assets): Promise<Game> {
   let propeller: THREE.Object3D | null = null;
   /** Moves the horse's legs, head and tail; null for anything with wheels. */
   let horseGait: Gait | null = null;
+  /** The colour of his horse: that of the last one he climbed onto. */
+  let horseCoat = 0;
   let wheels: THREE.Object3D[] = [];
   let vehicleToken = 0;
 
@@ -1620,14 +1623,9 @@ async function createGame(assets: Assets): Promise<Game> {
       model = makePlane();
       propeller = model.getObjectByName('propeller') ?? null;
     } else if (item.kind === 'horse') {
-      const gltf = await loadModel('village/horse_A.gltf');
-      if (token !== vehicleToken) return;
-      model = gltf.scene.clone(true);
-      model.scale.setScalar(HORSE_SCALE);
-      horseGait = rigHorse(model);
-      model.traverse((o) => {
-        o.castShadow = true;
-      });
+      const horse = makeHorse(horseCoat);
+      model = horse.model;
+      horseGait = horse.gait;
     } else {
       const gltf = await loadModel(`${item.kind}/${item.name}.glb`);
       if (token !== vehicleToken) return;
@@ -1979,6 +1977,7 @@ async function createGame(assets: Assets): Promise<Game> {
     if (!item) return;
     terrain.takeHorse(h);
     nearHorse = null;
+    horseCoat = h.coat;
     void setVehicle(item).then(() => {
       carPos.set(h.x, groundAt(h.x, h.z), h.z);
       carHeading = h.rot;

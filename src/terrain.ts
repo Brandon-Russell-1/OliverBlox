@@ -1,4 +1,4 @@
-import { rigHorse, type Gait } from './horse';
+import { makeHorse, HORSE_COATS, type Gait } from './horse';
 import * as THREE from 'three';
 import { fbm, hash2, smoothstep, mulberry32 } from './noise';
 import { BUILDINGS, type PropDef, type PropLibrary } from './assets';
@@ -215,9 +215,10 @@ function layVillage(lay: Layout, rx: number, rz: number, city = false): void {
   }
   for (let i = 0; i < 4; i++) lay.prop('flag_blue', Math.sin(i * 1.571 + 0.78) * 9, Math.cos(i * 1.571 + 0.78) * 9, i * 1.571);
   // Horses on the green in the middle, where nobody can miss them. They can be ridden.
-  lay.prop('horse_A', 17, -14, 0.6);
-  lay.prop('horse_A', 21, -9, 2.5);
-  lay.prop('trough', 20, -15, 0.4);
+  // (On the far side from the race flag, so the two buttons never get in each other's way.)
+  lay.prop('horse_A', -14, 12, 0.6);
+  lay.prop('horse_A', -17, 7, 2.5);
+  lay.prop('trough', -17, 13, 0.4);
   if (!city) return;
   // A city: a third street of buildings, a castle at its head, watchtowers and banners.
   const turn = lay.roll() * Math.PI * 2;
@@ -422,7 +423,9 @@ export const VILLAGE_RADIUS = 46;
 
 /** A horse standing about in a village or on a farm. He can climb on and ride it away. */
 export interface Horse {
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
+  /** Which colour of horse it is. */
+  coat: number;
   gait: Gait;
   phase: number;
   x: number;
@@ -1067,7 +1070,7 @@ export class Terrain {
       const def = this.props.buildings[b.def];
       const g = groundAt(b.x, b.z);
       if (def === this.horseDef) {
-        const horse = this.liveHorse(def, b.x, g, b.z, b.scale, b.rot);
+        const horse = this.liveHorse(b.x, g, b.z, b.rot);
         const solid = { x: b.x, z: b.z, r: 0.9, top: g + 2.4 };
         horse.solid = solid;
         horses.push(horse);
@@ -1220,20 +1223,15 @@ export class Terrain {
     return mesh;
   }
 
-  /** A horse of its own, not baked into the scenery, so its head and tail can move. */
-  private liveHorse(def: PropDef, x: number, y: number, z: number, scale: number, rot: number): Horse {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(def.pos.slice(), 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(def.norm, 3));
-    geo.setAttribute('uv', new THREE.BufferAttribute(def.uv, 2));
-    geo.setAttribute('sway', new THREE.BufferAttribute(new Float32Array(def.count), 1));
-    const mesh = new THREE.Mesh(geo, this.props.buildingMaterial);
-    mesh.position.set(x, y, z);
-    mesh.rotation.y = rot;
-    mesh.scale.setScalar(scale);
-    mesh.castShadow = true;
-    this.scene.add(mesh);
-    return { mesh, gait: rigHorse(mesh), phase: (x * 0.37 + z * 0.61) % 20, x, z, rot, solid: { r: 0, top: 0 } };
+  /** A horse of its own, not baked into the scenery, so it can graze and be ridden away. */
+  private liveHorse(x: number, y: number, z: number, rot: number): Horse {
+    // Each spot always has the same colour of horse.
+    const coat = Math.floor(Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1 * HORSE_COATS);
+    const { model, gait } = makeHorse(coat);
+    model.position.set(x, y, z);
+    model.rotation.y = rot;
+    this.scene.add(model);
+    return { mesh: model, coat, gait, phase: (x * 0.37 + z * 0.61) % 20, x, z, rot, solid: { r: 0, top: 0 } };
   }
 
   /** The closest horse standing within reach, if any. */
@@ -1274,7 +1272,6 @@ export class Terrain {
     this.scene.remove(c.ground);
     for (const h of c.horses) {
       this.scene.remove(h.mesh);
-      h.mesh.geometry.dispose();
     }
     c.ground.geometry.dispose();
     for (const mesh of [c.props, c.buildings, c.walls, c.flames]) {

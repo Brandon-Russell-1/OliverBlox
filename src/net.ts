@@ -1,4 +1,4 @@
-import { rigHorse, sit, type Gait } from './horse';
+import { makeHorse, sit, type Gait } from './horse';
 import * as THREE from 'three';
 import { Actor } from './actor';
 import { loadModel, CHARACTERS } from './assets';
@@ -267,12 +267,16 @@ export class Peers {
         const target = peer;
         const boat = v.startsWith('boat');
         const horse = v === 'horse';
-        void loadModel(horse ? 'village/horse_A.gltf' : `${boat ? 'boat' : 'car'}/${v}.glb`).then((gltf) => {
+        if (horse) {
+          const made = makeHorse(0);
+          target.vehicle = made.model;
+          target.gait = made.gait;
+          target.group.add(made.model);
+        } else void loadModel(horse ? 'village/horse_A.gltf' : `${boat ? 'boat' : 'car'}/${v}.glb`).then((gltf) => {
           if (target.vehicleName !== v) return;
           target.vehicle = gltf.scene.clone(true);
           target.vehicle.scale.setScalar(horse ? 4.8 : 2);
           target.vehicle.position.y = horse ? 0 : boat ? -0.25 : 0.6;
-          if (horse) target.gait = rigHorse(target.vehicle);
           target.group.add(target.vehicle);
         });
       }
