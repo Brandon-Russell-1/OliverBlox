@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { loadAssets, loadModel, CHARACTERS, PETS, type Assets } from './assets';
-import { Terrain, NATURE, groundAt, nearestVillage, villagesNear, sitesNear, SITE_ICONS, type Door, linkedPlace, AIRSTRIP, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
+import { Terrain, NATURE, groundAt, nearestVillage, villagesNear, sitesNear, SITE_ICONS, type Door, type Horse, linkedPlace, AIRSTRIP, SEA_LEVEL, VILLAGE_RADIUS, DUNGEON_HALF, DUNGEON_HEIGHT, type Village } from './terrain';
 import { MiniMap, type MapIcon } from './map';
 import { Home, ROOM, type Spot } from './home';
 import { Coder } from './coder';
@@ -24,7 +24,7 @@ import { Life } from './life';
 import { BRUTE, GOLDEN } from './combat';
 import { rigHorse, sit, swimStroke, raiseShield, makeShield, type Gait } from './horse';
 import { Moon, Rocket, MOON, ROCKET_PARTS, moonHeight } from './space';
-import { Buddies, BUDDIES, BUDDY_GOALS } from './buddies';
+import { Buddies, BUDDIES, BUDDY_GOALS, PARTY_MAX } from './buddies';
 import { Chat, PERSONAS, setupParentPanel, getAiSettings } from './chat';
 import { sfx, speak, unlockAudio, setRain, thunder, footstep, setAmbience, type Surface } from './audio';
 import { Effects } from './effects';
@@ -145,6 +145,8 @@ interface Save {
   /** How many pieces of the rocket are built, and when the moon's crystals were last gathered. */
   rocket?: number;
   moonAt?: number;
+  /** Which AI friends are in his party. */
+  party?: string[];
   /** Vehicles unlocked in the garage. */
   vehicles?: string[];
   /** Furniture bought for the house. */
@@ -562,6 +564,8 @@ const skills: Record<string, number> = { spin: 0, speed: 0, jump: 0, magic: 0, h
 for (const s of SKILLS) skills[s.key] = Math.min(SKILL_MAX, Math.max(0, Math.floor(save?.skills?.[s.key] ?? 0)));
 /** True while he is on horseback: unlike in a car he can be seen, can fight and can be hit. */
 let onHorse = false;
+/** The AI friends travelling with him. */
+let partyIds: string[] = (save?.party ?? ['nova', 'rex']).filter((id) => typeof id === 'string').slice(0, PARTY_MAX);
 /** After armor takes a blow, the shield stays up until this time. */
 let blockUntil = 0;
 /** For testing: hold the shield arm at this height, and turn the shield this way in the hand. */
@@ -859,6 +863,7 @@ function saveNow(): void {
     extraHearts,
     armor,
     skills,
+    party: partyIds,
     boots,
     pet: petSpecies,
     quests: quests.save(),
@@ -1665,8 +1670,14 @@ async function createGame(assets: Assets): Promise<Game> {
   const NAME_START = ['Apple', 'Moss', 'Honey', 'Pebble', 'Clover', 'Maple', 'Sunny', 'Willow', 'Berry', 'Fern'];
   const NAME_END = ['ton', 'by', 'ford', 'wick', 'dale', 'brook', 'field', 'ham'];
   const villageName = (v: Village): string => {
-    const h = hashOf(v.id);
-    return NAME_START[h % NAME_START.length] + NAME_END[(h >> 8) % NAME_END.length];
+    let h = hashOf(v.id);
+    // The first village keeps the name it has always had; everywhere else the number is stirred well,
+    // so that places next door to each other do not end up with nearly the same name.
+    if (v.id !== '0,0') {
+      h = Math.imul(h ^ (h >>> 13), 0x5bd1e995) >>> 0;
+      h = (h ^ (h >>> 15)) >>> 0;
+    }
+    return NAME_START[h % NAME_START.length] + NAME_END[(h >>> 8) % NAME_END.length] + (v.city ? ' City' : '');
   };
   const toastEl = $('toast');
   let toastTimer = 0;
@@ -1722,7 +1733,20 @@ async function createGame(assets: Assets): Promise<Game> {
     });
   }
 
+  /** Hamlets are too small for townsfolk, but each still has a name of its own. */
+  let hamletShown = '';
+  let hamletCheck = 0;
   function updateVillagers(dt: number, who: THREE.Vector3): void {
+    hamletCheck -= dt;
+    if (hamletCheck <= 0) {
+      hamletCheck = 1;
+      const hamlet = inside || underground || onMoon ? undefined : sitesNear(who.x, who.z, 34).find((s) => s.site === 'hamlet' && Math.hypot(s.x - who.x, s.z - who.z) < 34);
+      if (hamlet && hamlet.id !== hamletShown && started) {
+        toast(`🏘️ ${villageName(hamlet)}`);
+        speak(`Welcome to ${villageName(hamlet)}!`);
+      }
+      hamletShown = hamlet?.id ?? '';
+    }
     const v = nearestVillage(who.x, who.z);
     const close = v && v.kind === 'village' && Math.hypot(v.x - who.x, v.z - who.z) < 170 ? v : null;
     if (close !== villageShown) void showVillage(close);
@@ -1948,6 +1972,21 @@ async function createGame(assets: Assets): Promise<Game> {
   let nearAnimal: Animal | null = null;
   /** The AI friend he is standing next to, if any. */
   let nearBuddy: { id: string; name: string } | null = null;
+  let nearHorse: Horse | null = null;
+  /** Climb onto a horse that was standing about: it is his to ride from then on. */
+  function rideHorse(h: Horse): void {
+    const item = GARAGE.find((g) => g.kind === 'horse');
+    if (!item) return;
+    terrain.takeHorse(h);
+    nearHorse = null;
+    void setVehicle(item).then(() => {
+      carPos.set(h.x, groundAt(h.x, h.z), h.z);
+      carHeading = h.rot;
+      enterVehicle();
+      speak('Giddy up!');
+      dirty = true;
+    });
+  }
   function befriend(animal: Animal): void {
     petSpecies = animals.adopt(animal);
     // The old pet goes back to the wild.
@@ -1976,6 +2015,7 @@ async function createGame(assets: Assets): Promise<Game> {
     else if (nearBuddy) chat.open(PERSONAS[nearBuddy.id]);
     else if (nearFlag()) startRace(false);
     else if (nearAnimal) befriend(nearAnimal);
+    else if (nearHorse) rideHorse(nearHorse);
     else if (nearDoor()) goInside();
     else if (nearVehicle()) enterVehicle();
     else if (lift) riding = lift;
@@ -2372,6 +2412,7 @@ async function createGame(assets: Assets): Promise<Game> {
     dirty = true;
   }
 
+  let quietWin = false;
   const enemyContext: EnemyContext = {
     isSafe,
     onHit(targetId, from) {
@@ -2379,6 +2420,8 @@ async function createGame(assets: Assets): Promise<Game> {
       else net.send({ t: 'hit', to: targetId, x: from.x, z: from.z });
     },
     onDefeat(_at, boss, kind) {
+      // A skeleton beaten by a friend who is not in his party is that friend's win, not his.
+      if (quietWin && !boss) return;
       const fort = boss ? bossFort : '';
       if (boss) bossFort = '';
       reward(boss, fort);
@@ -3778,20 +3821,127 @@ async function createGame(assets: Assets): Promise<Game> {
         toast(`🤖 ${by} ⭐`);
       },
       nearestEnemy: (pos, range) => (enemies.remote ? null : enemies.nearest(pos, range)),
-      hitEnemy: (at) => {
-        if (enemies.damageAt(at, 2.6, 1, enemyContext) > 0) sfx.bonk();
+      hitEnemy: (at, party) => {
+        quietWin = !party;
+        const hit = enemies.damageAt(at, 2.6, 1, enemyContext) > 0;
+        quietWin = false;
+        // Only a fight close by is heard.
+        if (hit && (party || at.distanceTo(player.pos) < 30)) sfx.bonk();
+      },
+      placeNear: (pos) => {
+        // Any village, hamlet, farm or camp around there will do.
+        const spots = [...villagesNear(pos.x, pos.z).filter((v) => v.kind === 'village'), ...sitesNear(pos.x, pos.z, 240)].filter((v) => {
+          const d = Math.hypot(v.x - pos.x, v.z - pos.z);
+          return d > 25 && d < 240;
+        });
+        if (spots.length === 0) return null;
+        // One of the three nearest, so they are never too far to come across.
+        const far = (v: Village): number => Math.hypot(v.x - pos.x, v.z - pos.z);
+        spots.sort((a, b) => far(a) - far(b));
+        const pick = spots[Math.floor(Math.random() * Math.min(3, spots.length))];
+        return new THREE.Vector3(pick.x, 0, pick.z);
       },
     },
     player.pos,
+    partyIds,
   );
-  chat.onAction = (id, action) => buddies.setGoal(id, action);
+
+  // ---- his party: the friends who travel with him ----
+  const partyEl = $('party');
+  const partyPanel = $('party-panel');
   const GOAL_ICONS: Record<string, string> = { follow: '👣', stars: '⭐', fight: '⚔️', fish: '🎣', explore: '🧭' };
+  let partyShown = '';
+  /** The row at the top of the screen: who is with him, and what each is up to. */
+  function showParty(): void {
+    const members = BUDDIES.filter((b) => buddies.inParty(b.id));
+    const text = members.map((b) => b.id + buddies.goalOf(b.id)).join() + peers.count + parent.friends;
+    if (text === partyShown) return;
+    partyShown = text;
+    partyEl.hidden = !parent.friends;
+    const open = document.createElement('span');
+    open.textContent = '👥';
+    partyEl.replaceChildren(
+      open,
+      ...members.map((b) => {
+        const chip = document.createElement('span');
+        chip.className = 'member';
+        chip.textContent = `${b.icon} ${b.name} ${GOAL_ICONS[buddies.goalOf(b.id)] ?? ''}`;
+        return chip;
+      }),
+    );
+    if (peers.count > 0) {
+      const real = document.createElement('span');
+      real.className = 'member';
+      real.textContent = `🧒 × ${peers.count}`;
+      partyEl.append(real);
+    }
+    if (!partyPanel.hidden) renderParty();
+  }
+  function joinParty(id: string, on: boolean): boolean {
+    const who = BUDDIES.find((b) => b.id === id);
+    if (!who || buddies.inParty(id) === on) return true;
+    if (!buddies.setParty(id, on)) {
+      sfx.remove();
+      speak('Your party is full. Tap a friend to say goodbye first.');
+      return false;
+    }
+    if (on) {
+      buddies.setGoal(id, 'follow');
+      sfx.win();
+      speak(`${who.name} joins your party!`);
+      toast(`👥 ➕ ${who.icon} ${who.name}`);
+    } else {
+      buddies.setGoal(id, who.likes);
+      sfx.door();
+      speak(`Bye for now, ${who.name}!`);
+      toast(`👋 ${who.icon} ${who.name}`);
+    }
+    partyIds = buddies.party();
+    dirty = true;
+    showParty();
+    return true;
+  }
+  function renderParty(): void {
+    const head = document.createElement('div');
+    head.className = 'points';
+    head.textContent = `👥 ${buddies.party().length} / ${PARTY_MAX}`;
+    partyPanel.replaceChildren(
+      head,
+      ...BUDDIES.map((b) => {
+        const inIt = buddies.inParty(b.id);
+        const btn = document.createElement('button');
+        btn.className = inIt ? 'owned' : '';
+        const name = document.createElement('span');
+        name.textContent = `🤖 ${b.name}`;
+        const state = document.createElement('span');
+        state.textContent = inIt ? `✅ ${GOAL_ICONS[buddies.goalOf(b.id)] ?? ''}` : '➕';
+        btn.append(b.icon, name, state);
+        btn.addEventListener('click', () => {
+          joinParty(b.id, !inIt);
+          renderParty();
+        });
+        return btn;
+      }),
+    );
+  }
+  function toggleParty(): void {
+    if (partyPanel.hidden) renderParty();
+    partyPanel.hidden = !partyPanel.hidden;
+  }
+  partyEl.addEventListener('click', toggleParty);
+  $('party-btn').addEventListener('click', toggleParty);
+  // Asking a friend to come along (in a chat) brings them into the party.
+  chat.onAction = (id, action) => {
+    if (action === 'follow' && !joinParty(id, true)) return;
+    buddies.setGoal(id, action);
+  };
   let decideTimer = 40;
   let decideTurn = 0;
   /** Every so often one friend decides what to do next: Claude chooses if the helper is set up, chance if not. */
   function updateBuddies(dt: number): void {
     buddies.visible = parent.friends && inside === null;
     buddies.update(dt, player.pos, now);
+    showParty();
     decideTimer -= dt;
     if (decideTimer > 0 || !parent.friends || chat.isOpen) return;
     // One friend at a time, so each decides about every four minutes.
@@ -3799,8 +3949,11 @@ async function createGame(assets: Assets): Promise<Game> {
     const who = BUDDIES[decideTurn++ % BUDDIES.length];
     const ai = getAiSettings();
     const choose = (goal: string, said: string): void => {
-      buddies.setGoal(who.id, goal);
-      toast(`🤖 ${who.name} ${GOAL_ICONS[goal] ?? ''}${said ? `  ${said}` : ''}`.slice(0, 80));
+      const mine = buddies.inParty(who.id);
+      // A friend out on their own does not come running just because they fancy company.
+      buddies.setGoal(who.id, !mine && goal === 'follow' ? 'explore' : goal);
+      // What the others get up to far away is their own business; only his party reports in.
+      if (mine) toast(`🤖 ${who.name} ${GOAL_ICONS[goal] ?? ''}${said ? `  ${said}` : ''}`.slice(0, 80));
     };
     if (!ai.url) {
       choose(BUDDY_GOALS[Math.floor(Math.random() * BUDDY_GOALS.length)], '');
@@ -3996,16 +4149,26 @@ async function createGame(assets: Assets): Promise<Game> {
         closest = v;
       }
     }
+    // The nearest city is pinned as well, so he can always find his way to one.
+    let closestCity: Village | null = null;
+    best = Infinity;
+    for (const v of places) {
+      const d = Math.hypot(v.x - who.x, v.z - who.z);
+      if (v.city && d < best) {
+        best = d;
+        closestCity = v;
+      }
+    }
     for (const v of places) {
       const won = v.kind === 'fort' ? fortHeld(v.id) : clearedForts.has(v.id);
       const icon = v.kind === 'village' ? (v.city ? '🏙️' : '🏠') : v.kind === 'cave' ? '🕳️' : v.kind === 'maze' ? (won ? '✔️' : '🏛️') : won ? '🏳️' : '🏰';
-      icons.push({ x: v.x, z: v.z, icon, pin: v === closest, label: v.kind === 'village' ? villageName(v) : undefined });
+      icons.push({ x: v.x, z: v.z, icon, pin: v === closest || v === closestCity, label: v.kind === 'village' ? villageName(v) : undefined });
     }
-    for (const s of sitesNear(who.x, who.z, miniMap.big ? miniMap.range * 1.45 : 280)) if (s.site) icons.push({ x: s.x, z: s.z, icon: SITE_ICONS[s.site] });
+    for (const s of sitesNear(who.x, who.z, miniMap.big ? miniMap.range * 1.45 : 280)) if (s.site) icons.push({ x: s.x, z: s.z, icon: SITE_ICONS[s.site], label: s.site === 'hamlet' ? villageName(s) : undefined });
     icons.push({ x: PAD.x, z: PAD.z, icon: '🚀', pin: true });
     for (const p of peers.positions()) icons.push({ x: p.x, z: p.z, icon: p.icon, pin: true });
     if (guideTarget) icons.push({ x: guideTarget.x, z: guideTarget.z, icon: '🎯', pin: true });
-    for (const p of buddies.positions()) icons.push({ x: p.x, z: p.z, icon: '🤖' });
+    for (const p of buddies.positions()) icons.push({ x: p.x, z: p.z, icon: '🤖', pin: p.party });
     const mine = villageShown?.buildings[1];
     if (mine) icons.push({ x: mine.x, z: mine.z, icon: '🏡' });
     miniMap.update(dt, who.x, who.z, camYaw, driving ? carHeading : facing, icons);
@@ -4020,6 +4183,7 @@ async function createGame(assets: Assets): Promise<Game> {
         groundAt,
         nearestVillage,
         sitesNear,
+        villagesNear,
         doors: () => terrain.doorsNear(player.pos.x, player.pos.z).map((d) => ({ id: d.id, name: d.name, x: d.x, z: d.z })),
         place: () => placeIn?.name ?? '',
         enemies,
@@ -4106,6 +4270,9 @@ async function createGame(assets: Assets): Promise<Game> {
           shield,
           skills: { ...skills },
           skillPoints: skillPoints(),
+          party: buddies.party(),
+          buddies: buddies.positions(),
+          nearHorse: nearHorse !== null,
           onHorse,
           carSpeed,
           inside: inside !== null,
@@ -4235,6 +4402,7 @@ async function createGame(assets: Assets): Promise<Game> {
         }
         nearAnimal = animals.nearest(player.pos, 4.5);
         nearBuddy = driving ? null : buddies.nearest(player.pos, 4);
+        nearHorse = driving || riding || inside ? null : terrain.nearestHorse(player.pos, 4.2);
         // The shop shuts when he walks away from the shopkeeper.
         if (!shopEl.hidden && nearVillager?.persona !== 'shop') shopEl.hidden = true;
         const talk = nearVillager?.persona === 'shop' ? '🛒' : '💬';
@@ -4263,6 +4431,8 @@ async function createGame(assets: Assets): Promise<Game> {
                     ? '🏁'
                     : nearAnimal
                       ? '🐾'
+                      : nearHorse
+                        ? '🐴'
                       : nearDoor()
                         ? '🚪'
                         : nearVehicle()

@@ -214,6 +214,10 @@ function layVillage(lay: Layout, rx: number, rz: number, city = false): void {
     }
   }
   for (let i = 0; i < 4; i++) lay.prop('flag_blue', Math.sin(i * 1.571 + 0.78) * 9, Math.cos(i * 1.571 + 0.78) * 9, i * 1.571);
+  // Horses on the green in the middle, where nobody can miss them. They can be ridden.
+  lay.prop('horse_A', 17, -14, 0.6);
+  lay.prop('horse_A', 21, -9, 2.5);
+  lay.prop('trough', 20, -15, 0.4);
   if (!city) return;
   // A city: a third street of buildings, a castle at its head, watchtowers and banners.
   const turn = lay.roll() * Math.PI * 2;
@@ -277,7 +281,7 @@ function siteIn(cx: number, cz: number): Village | null {
   const z = (cz + 0.3 + 0.4 * hash2(cx, cz, 212)) * SITE_CELL;
   const h = baseHeight(x, z);
   const v = nearestVillage(x, z);
-  const clear = Math.hypot(x, z) > 150 && x < DUNGEON_SHIFT * REGION * 0.4 && z < DUNGEON_SHIFT * REGION * 0.4 && (!v || Math.hypot(v.x - x, v.z - z) > 120) && airstripDistance(x, z) > 60;
+  const clear = Math.hypot(x, z) > 150 && x < DUNGEON_SHIFT * REGION * 0.4 && z < DUNGEON_SHIFT * REGION * 0.4 && (!v || Math.hypot(v.x - x, v.z - z) > (v.city ? 175 : 120)) && airstripDistance(x, z) > 60;
   if (clear && h > 1.3 && h < 26 && hash2(cx, cz, 213) < (h < 2.3 ? 0.3 : 0.66)) {
     const roll = hash2(cx, cz, 214);
     const type: SiteType =
@@ -415,6 +419,37 @@ export function sitesNear(x: number, z: number, reach = 300): Village[] {
 const REGION = 420;
 const BUILDING_SCALE = 11;
 export const VILLAGE_RADIUS = 46;
+
+/** A horse standing about in a village or on a farm. He can climb on and ride it away. */
+export interface Horse {
+  mesh: THREE.Mesh;
+  gait: Gait;
+  phase: number;
+  x: number;
+  z: number;
+  rot: number;
+  /** What stops him walking through it; switched off once it has been ridden away. */
+  solid: { r: number; top: number };
+}
+
+/** The city nearest to where the game starts: the closest good building land in the region to the east. */
+let firstCitySpot: { x: number; z: number } | null | undefined;
+function firstCityAt(): { x: number; z: number } | null {
+  if (firstCitySpot !== undefined) return firstCitySpot;
+  firstCitySpot = null;
+  let best = Infinity;
+  for (let x = REGION + 30; x <= REGION + 300; x += 15) {
+    for (let z = 30; z <= REGION - 30; z += 15) {
+      const h = baseHeight(x, z);
+      const d = Math.hypot(x - 80, z - 75);
+      if (h > 4 && h < 18 && d < best) {
+        best = d;
+        firstCitySpot = { x, z };
+      }
+    }
+  }
+  return firstCitySpot;
+}
 const villages = new Map<string, Village | null>();
 
 function villageIn(rx: number, rz: number): Village | null {
@@ -444,13 +479,15 @@ function villageIn(rx: number, rz: number): Village | null {
   const firstFort = rx === -1 && rz === 0;
   const firstMaze = rx === 0 && rz === -1;
   const firstCave = rx === -1 && rz === -1;
+  // One city is always within reach of home, so he does not have to cross the world to find one.
+  const cityAt = rx === 1 && rz === 0 ? firstCityAt() : null;
   // The first village and the first fort are always a short walk from where the game starts.
-  const x = home ? 80 : firstFort ? -150 : firstMaze ? 70 : firstCave ? -70 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
-  const z = home ? 75 : firstFort ? 40 : firstMaze ? -150 : firstCave ? -150 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
+  const x = cityAt ? cityAt.x : home ? 80 : firstFort ? -150 : firstMaze ? 70 : firstCave ? -70 : (rx + 0.2 + 0.6 * hash2(rx, rz, 72)) * REGION;
+  const z = cityAt ? cityAt.z : home ? 75 : firstFort ? 40 : firstMaze ? -150 : firstCave ? -150 : (rz + 0.2 + 0.6 * hash2(rx, rz, 73)) * REGION;
   const h = baseHeight(x, z);
   const buildable = h > 3 && h < 22;
   const roll = hash2(rx, rz, 71);
-  const kind = home
+  const kind = home || cityAt
     ? 'village'
     : firstFort
       ? 'fort'
@@ -469,8 +506,8 @@ function villageIn(rx: number, rz: number): Village | null {
                   : 'cave';
   if (kind) {
     const lay = new Layout(x, z, 0, rx * 131 + rz * 7 + 1);
-    // About one village in three, away from home, has grown into a city.
-    const city = kind === 'village' && !home && hash2(rx, rz, 77) < 0.36;
+    // About half the villages away from home have grown into cities.
+    const city = kind === 'village' && !home && (cityAt !== null || hash2(rx, rz, 77) < 0.5);
     if (kind === 'village') layVillage(lay, rx, rz, city);
     else if (kind === 'fort') layFort(lay);
     village = {
@@ -746,7 +783,7 @@ interface Chunk {
   walls: THREE.Mesh | null;
   flames: THREE.Mesh | null;
   /** Horses standing about: each is its own shape so it can lower its head to graze. */
-  horses: { mesh: THREE.Mesh; gait: Gait; phase: number }[];
+  horses: Horse[];
   colliders: Collider[];
   star: Star | null;
   chest: Star | null;
@@ -1030,8 +1067,11 @@ export class Terrain {
       const def = this.props.buildings[b.def];
       const g = groundAt(b.x, b.z);
       if (def === this.horseDef) {
-        horses.push(this.liveHorse(def, b.x, g, b.z, b.scale, b.rot));
-        colliders.push({ x: b.x, z: b.z, r: 0.9, top: g + 2.4 });
+        const horse = this.liveHorse(def, b.x, g, b.z, b.scale, b.rot);
+        const solid = { x: b.x, z: b.z, r: 0.9, top: g + 2.4 };
+        horse.solid = solid;
+        horses.push(horse);
+        colliders.push(solid);
         continue;
       }
       // The models' front doors are on their +z side, which this turns to face the middle of the village.
@@ -1181,7 +1221,7 @@ export class Terrain {
   }
 
   /** A horse of its own, not baked into the scenery, so its head and tail can move. */
-  private liveHorse(def: PropDef, x: number, y: number, z: number, scale: number, rot: number): Chunk['horses'][number] {
+  private liveHorse(def: PropDef, x: number, y: number, z: number, scale: number, rot: number): Horse {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(def.pos.slice(), 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(def.norm, 3));
@@ -1193,7 +1233,30 @@ export class Terrain {
     mesh.scale.setScalar(scale);
     mesh.castShadow = true;
     this.scene.add(mesh);
-    return { mesh, gait: rigHorse(mesh), phase: (x * 0.37 + z * 0.61) % 20 };
+    return { mesh, gait: rigHorse(mesh), phase: (x * 0.37 + z * 0.61) % 20, x, z, rot, solid: { r: 0, top: 0 } };
+  }
+
+  /** The closest horse standing within reach, if any. */
+  nearestHorse(pos: THREE.Vector3, reach: number): Horse | null {
+    let best: Horse | null = null;
+    let bestDist = reach;
+    for (const c of this.chunks.values()) {
+      for (const h of c.horses) {
+        const d = Math.hypot(h.x - pos.x, h.z - pos.z);
+        if (h.mesh.visible && d < bestDist) {
+          best = h;
+          bestDist = d;
+        }
+      }
+    }
+    return best;
+  }
+
+  /** He has climbed on: the horse leaves its spot (the one he rides takes its place). */
+  takeHorse(h: Horse): void {
+    h.mesh.visible = false;
+    h.solid.r = 0;
+    h.solid.top = -999;
   }
 
   /** Move the things that move on their own: horses graze, lifting their heads now and then. */

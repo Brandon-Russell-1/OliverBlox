@@ -1157,6 +1157,7 @@ body:not(.touch) #action {
 
 /* Skills: one big button each, with stars for how far it has been learned. */
 #skills,
+#party-panel,
 #rocket-kit {
   position: fixed;
   z-index: 6;
@@ -1173,11 +1174,14 @@ body:not(.touch) #action {
 }
 
 #skills[hidden],
+#party-panel[hidden],
+#party[hidden],
 #rocket-kit[hidden] {
   display: none;
 }
 
-#skills .points {
+#skills .points,
+#party-panel .points {
   grid-column: 1 / -1;
   text-align: center;
   font-size: 26px;
@@ -1186,6 +1190,7 @@ body:not(.touch) #action {
 }
 
 #skills button,
+#party-panel button,
 #rocket-kit button {
   min-width: 0;
   display: flex;
@@ -1198,7 +1203,8 @@ body:not(.touch) #action {
   font-size: 38px;
 }
 
-#skills button span {
+#skills button span,
+#party-panel button span {
   font-size: 15px;
 }
 
@@ -1214,6 +1220,7 @@ body:not(.touch) #action {
 }
 
 #skills button.owned,
+#party-panel button.owned,
 #rocket-kit button.owned {
   background: #c9f5d2;
 }
@@ -1229,5 +1236,51 @@ body:not(.touch) #action {
 @keyframes skill-pulse {
   50% {
     transform: scale(1.12);
+  }
+}
+
+/* Who is in his party: a row beside the star count. Tapping it opens the list of friends. */
+#party {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top));
+  left: calc(230px + env(safe-area-inset-left));
+  height: 48px;
+  max-width: calc(100vw - 560px);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(20, 30, 80, 0.55);
+  color: #fff;
+  font-size: 22px;
+  white-space: nowrap;
+}
+
+#party .member {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+#party-panel {
+  grid-template-columns: repeat(3, minmax(84px, 130px));
+}
+
+#party-panel button span {
+  font-weight: 800;
+  color: #1c2a6b;
+}
+
+/* On a narrow screen there is only room for the button, not the names. */
+@media (max-width: 760px) {
+  #party {
+    max-width: none;
+  }
+  #party .member {
+    display: none;
   }
 }
